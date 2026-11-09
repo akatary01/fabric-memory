@@ -1,0 +1,61 @@
+{
+  "tests_passed": 5,
+  "live_mac_checks": {
+    "url": {
+      "provider": "local",
+      "model": "lfm3:1.7b-q4_K_M",
+      "route_reason": "Local mode selected; no cloud fallback.",
+      "source_count": 1,
+      "sources": [
+        {
+          "title": "What is Ownership? - The Rust Programming Language",
+          "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+          "kind": "page"
+        }
+      ],
+      "answer": "Ownership in Rust defines a rule-based system where each value has a single owner responsible for its lifetime, preventing dangling pointers and ensuring memory safety without a garbage collector\u2014enforced by the compiler during compilation.\n\n**Source:** [S1] \"What Is Ownership?\" \u2013 Rust Programming Language, https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"
+    },
+    "search": {
+      "provider": "local",
+      "model": "lfm3:1.7b-q4_K_M",
+      "route_reason": "Local mode selected; no cloud fallback.",
+      "source_count": 3,
+      "sources": [
+        {
+          "title": "Google",
+          "url": "https://www.google.com/",
+          "kind": "page"
+        },
+        {
+          "title": "What is Ownership? - The Rust Programming Language",
+          "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+          "kind": "page"
+        },
+        {
+          "title": "Search - Microsoft Bing",
+          "url": "https://www.bing.com/",
+          "kind": "search snippet"
+        }
+      ],
+      "answer": "Rust's ownership is a language-enforced rule set that assigns a single owner to every value, automatically managing lifetimes so there are no dangling references or memory leaks, and the compiler rejects any code that violates these rules at compile time.\n\n**Sources:**\n- S1: \u201cWhat Is Ownership?\u201d \u2013 Rust Programming Language, doc.rust-lang.org/book/ch04-01-what-is-ownership.html  \n- S2: Same page content quoted above."
+    },
+    "auto": {
+      "provider": "local",
+      "model": "lfm3:1.7b-q4_K_M",
+      "route_reason": "Simple arithmetic question, no need for external lookup or complex reasoning.",
+      "source_count": 0,
+      "sources": [],
+      "answer": "2 + 2 = 4.\n\n(No need to search memory; this is basic arithmetic.)\n\n2 + 2 equals **4**.\n\n**Answer:** 4."
+    }
+  },
+  "cloud_live_tested": false,
+  "cloud_missing_configuration_rejected": true,
+  "markdown_checks": "Passed DOM assertions: headings, bold, code, tables, collapsed separate/inline/unfinished thinking, removal of scripts/images/forms/javascript URLs.",
+  "native_ui_checked": {
+    "markdown": true,
+    "thinking_collapsed_by_default": true,
+    "thinking_expand": true,
+    "routing_selectors": true
+  },
+  "scope": "Mac only; no iOS build, archive or Wi-Fi change."
+}

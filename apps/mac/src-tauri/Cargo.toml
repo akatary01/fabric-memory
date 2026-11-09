@@ -1,0 +1,17 @@
+[package]
+name = "fabric-mac"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+fabric-core = { path = "../../../core" }
+tauri = { version = "2.12", default-features = false, features = ["wry", "config-toml"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+scraper = "0.24"
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = ["config-toml"] }

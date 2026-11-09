@@ -1,0 +1,10 @@
+[workspace]
+members = ["core", "apps/mac/src-tauri"]
+default-members = ["core"]
+resolver = "2"
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = true

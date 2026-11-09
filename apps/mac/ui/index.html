@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Fabric</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/marked.js" defer></script>
+  <script src="vendor/purify.min.js" defer></script>
+  <script src="chat-render.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="mark" aria-hidden="true">◈</span><span>Memory Fabric</span></div>
+      <div class="nav-label">WORKSPACE</div>
+      <div class="nav-item"><span aria-hidden="true">▤</span> Your memories <span id="nav-count" class="count">0</span></div>
+      <div class="device-card">
+        <span class="connection-dot" id="connection-dot"></span><strong id="connection">Connecting…</strong>
+        <p>Mac · MPNet · 768 dimensions</p>
+        <div class="device-rule"></div>
+        <small>iPhone imports are translated<br>from MiniLM, 384 → 768.</small>
+      </div>
+      <p class="sidebar-foot">Local memory storage.<br>Choose local, cloud, or Auto.</p>
+    </aside>
+
+    <main>
+      <header>
+        <div><p class="eyebrow">LOCAL MEMORY</p><h1>A little more context.</h1><p class="subtitle">Save what matters. Find it again by meaning.</p></div>
+        <div class="toolbar">
+          <button id="pair" class="secondary">Pair iPhone</button>
+          <button id="sync" class="secondary">Sync now</button>
+          <input id="import-file" type="file" accept=".json,.jsonl,.ndjson" hidden>
+          <button id="import" class="secondary">Import iPhone memories</button>
+          <button id="export" class="secondary" title="Export the event ledger and reveal it in Finder">Export</button>
+        </div>
+      </header>
+      <div id="message" role="status" aria-live="polite" hidden></div>
+
+      <section class="chat-panel" aria-labelledby="chat-title">
+        <div class="section-heading"><h2 id="chat-title">Ask this Mac</h2><span id="model-status">Local model</span></div>
+        <div class="chat-controls">
+          <label for="answer-mode">Answer with</label>
+          <select id="answer-mode"><option value="auto">Auto</option><option value="local">Local</option><option value="cloud">Cloud</option></select>
+          <label for="web-mode">Web</label>
+          <select id="web-mode"><option value="auto">Auto</option><option value="off">Off</option><option value="on">On</option></select>
+        </div>
+        <p id="auto-sync-status" class="chat-hint" role="status">Automatic memory sync starting…</p>
+        <p id="routing-hint" class="chat-hint">Auto may send your prompt, selected memory and recent conversation to the cloud. Web search sends search terms to search engines.</p>
+        <div id="conversation" class="conversation" role="log" aria-live="polite"><p class="chat-hint">Ask a question or use your saved memories for context.</p></div>
+        <form id="prompt-form">
+          <label class="sr-only" for="prompt">Prompt</label>
+          <textarea id="prompt" rows="2" placeholder="Ask this Mac…" required maxlength="4000"></textarea>
+          <div class="composer-footer"><span id="generation-status" role="status">Each reply shows its model, routing reason and web sources.</span><button type="submit" class="primary">Send</button></div>
+        </form>
+      </section>
+
+      <form id="search-form" class="search-bar">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <label class="sr-only" for="query">Search memories by meaning</label>
+        <input id="query" placeholder="What do you want to remember?" autocomplete="off" required maxlength="16000">
+        <button type="submit" class="primary">Search</button>
+      </form>
+
+      <section class="composer">
+        <form id="memory-form">
+          <label for="memory-text">Add a memory</label>
+          <textarea id="memory-text" rows="3" placeholder="A project decision, a useful detail, something to pick up later…" required maxlength="16000"></textarea>
+          <div class="composer-footer"><span>Embedded locally with MPNet</span><button type="submit" class="primary">Save memory <span aria-hidden="true">↗</span></button></div>
+        </form>
+      </section>
+
+      <section aria-labelledby="list-title">
+        <div class="section-heading"><h2 id="list-title">Your memories <span id="memory-count">0</span></h2><div><button id="clear-search" class="text-button" hidden>Show all</button><button id="refresh" class="text-button">Refresh</button></div></div>
+        <div id="memories" class="memory-list"><div class="empty-state"><span class="empty-symbol" aria-hidden="true">◈</span><h3>Loading your memories</h3><p>Connecting to the local memory engine…</p></div></div>
+      </section>
+      <footer><span id="ledger-status">Opening local ledger…</span><span>MiniLM ↔ MPNet</span></footer>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*Pair*iPhone*.json
+
+# Reproducible assets, models, data, and build products
+/assets/
+/runs/
+/target/
+/.build/
+/.venv/
+/node_modules/
+**/.build/
+**/dist/
+**/node_modules/
+/apps/iphone/DemoAssets/
+/apps/iphone/FabricPhone.xcodeproj/
+/apps/mac/src-tauri/gen/
+**/xcuserdata/
+*.xcarchive/
+*.xcworkspace/
+*.ipa
+*.dSYM/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.db
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+
+# Keep only reviewed, non-personal verification reports
+/reports/*
+!/reports/README.md
+!/reports/automatic-sync.json
+!/reports/mac-routing-web.json
