@@ -1,3 +1,7 @@
+[▶ Watch the Mac + iPhone demo](https://github.com/akatary01/memory-fabric/blob/main/docs/demo/memory-fabric-demo.mp4)
+
+*Real phone memories retrieved on the Mac through MiniLM → MPNet translation and local LFM3 recall. Phone sync was triggered manually in this take.*
+
 # Memory Fabric
 
 Native, local-first cross-model memory translation on a Mac and a physical iPhone.
