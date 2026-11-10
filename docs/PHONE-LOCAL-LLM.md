@@ -16,7 +16,7 @@ The model adds approximately 1.1 GB to the app. TestFlight build 3 also supports
 direct numeric IPv6 pairing for IPv6-only Personal Hotspots. Import the newest
 Pair iPhone JSON after changing networks.
 
-Run npm run ios to prepare any missing assets and open the existing Xcode project.
+Run fabric-memory run --phone to prepare any missing assets and open the existing Xcode project.
 The launcher restores missing staged links from canonical assets after an iCloud
 move and preserves an existing Python environment rather than clearing it.
 

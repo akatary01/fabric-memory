@@ -76,6 +76,10 @@ def main():
             if ready():break
             time.sleep(0.25)
         else:raise RuntimeError("Local generator did not start. Check LocalLLM/service-error.log.")
+    selected=ROOT.parent/"model-config.json"
+    if selected.exists():
+        try:model=json.loads(selected.read_text()).get("model") or model
+        except (OSError,ValueError):pass
     installed=api("/api/tags").get("models",[])
     if not any(item.get("name")==model for item in installed):
         print("Downloading local model "+model+" (first run only)…",flush=True)

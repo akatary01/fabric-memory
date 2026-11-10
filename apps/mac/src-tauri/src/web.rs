@@ -216,6 +216,27 @@ pub fn open_source(address: &str) -> Result<(), String> {
         Err("Could not open source in browser".into())
     }
 }
+fn search_query(question: &str) -> String {
+    let text=question.trim(); let lower=text.to_lowercase();
+    for phrase in ["most recent news", "latest news", "recent news"] {
+        if let Some(i)=lower.find(phrase) {
+            let tail=text[i+phrase.len()..].trim_matches(|c:char| c.is_whitespace() || matches!(c,'?'|'.'|'!'));
+            return format!("latest news {tail}").trim().to_string();
+        }
+    }
+    for prefix in ["search google for ","search the web for ","look up ","search for ","google "] {
+        if lower.starts_with(prefix) { return text[prefix.len()..].trim().into(); }
+    }
+    text.into()
+}
+fn relevant(query:&str,title:&str,snippet:&str)->bool {
+    let lower=query.to_lowercase();
+    let stop=["the","and","for","with","from","this","that","what","which","how","find","search","latest","news","please","today","give","show","look","web","me"];
+    let mut terms=lower.split(|c:char|!c.is_alphanumeric()).filter(|t|t.len()>2 && !stop.contains(t)).collect::<Vec<_>>();terms.sort();terms.dedup();
+    if terms.len()<2{return true;}
+    let evidence=format!("{title} {snippet}").to_lowercase();
+    terms.iter().filter(|term|evidence.contains(**term)).count()>=2
+}
 pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     let direct = urls(question);
     if !direct.is_empty() {
@@ -239,15 +260,16 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     } else {
         http(&url)?
     };
+    let query=search_query(question);
     let response = client
         .post(url)
         .form(&[
-            ("q", question),
+            ("q", query.as_str()),
             ("format", "json"),
             ("categories", "general"),
         ])
         .send()
-        .map_err(|_| "Web search is unavailable. Run npm run web:setup.".to_string())?;
+        .map_err(|_| "Web search is unavailable. Restart Memory Fabric and check your internet connection.".to_string())?;
     if !response.status().is_success() {
         return Err(format!(
             "Search service returned HTTP {}",
@@ -270,6 +292,7 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
             continue;
         }
         let snippet = plain(result["content"].as_str().unwrap_or(""), 1500);
+        if !relevant(&query,result["title"].as_str().unwrap_or(""),&snippet){continue;}
         if fetched < 2 {
             fetched += 1;
             if let Ok(page) = fetch(url.as_str()) {
@@ -289,11 +312,25 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     }
     if sources.is_empty() {
         return Err(
-            "No usable web sources were returned. Try a direct public URL or a different search."
+            "No relevant, readable web sources were found for this query. Try a more precise query or use Auto with cloud enabled for broader research."
                 .into(),
         );
     }
     Ok(sources)
+}
+/// Small local models can repeat old capability disclaimers despite fresh evidence.
+/// Keep the UI truthful by falling back to actual retrieved results in that case.
+pub fn denies_access(text: &str) -> bool {
+    let text=text.to_lowercase().replace('’', "'");
+    ["don't have live", "do not have live", "don't have direct access", "don't have direct google", "cannot browse", "don't have the ability to browse", "can't access live", "cannot access live", "can't browse", "can't retrieve live", "cannot retrieve live", "can't fetch", "cannot fetch", "can't check google", "cannot check google", "without a specific source", "no live internet", "lack live web"].iter().any(|phrase|text.contains(phrase)) || text.trim_start().starts_with("the user asks")
+}
+pub fn result_summary(sources: &[Value]) -> String {
+    let mut text="Here are the live web results:\n\n".to_string();
+    for (i,source) in sources.iter().enumerate() {
+        let excerpt=source["content"].as_str().unwrap_or("").split_whitespace().take(40).collect::<Vec<_>>().join(" ");
+        text.push_str(&format!("- **{}** — {}… [S{}]\n",source["title"].as_str().unwrap_or("Source"),excerpt,i+1));
+    }
+    text
 }
 pub fn context(sources: &[Value]) -> String {
     sources
@@ -319,6 +356,21 @@ pub fn context(sources: &[Value]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn news_queries_keep_topics_and_drop_command_words() {
+        assert_eq!(search_query("Fetch and summarize the latest news"),"latest news");
+        assert_eq!(search_query("check google for most recent news"),"latest news");
+        assert_eq!(search_query("What is the latest news about Apple?"),"latest news about Apple");
+    }
+    #[test]
+    fn live_results_replace_false_capability_refusals() {
+        assert!(denies_access("I can’t retrieve live web content without a specific source or tool integration."));
+        assert!(!denies_access("Here are today's headlines [S1]."));
+        let result=result_summary(&[json!({"title":"Actual source","content":"A verified result from retrieval."})]);
+        assert!(result.contains("Actual source"));
+        assert!(result.contains("[S1]"));
+        assert!(!denies_access(&result));
+    }
     #[test]
     fn reader_blocks_internal_networks_and_redirect_targets() {
         for value in [
@@ -349,4 +401,9 @@ mod tests {
             vec!["https://example.com/docs"]
         );
     }
+}
+
+#[cfg(test)]
+mod relevance_tests {use super::*;
+#[test]fn ignores_unrelated_single_word_hits(){assert!(!relevant("chanel brown leather bag","Brown University","University news"));assert!(!relevant("International Mathematical Olympiad 2025 problem 6","International Trucks","Heavy trucks"));assert!(relevant("chanel brown leather bag","Chanel brown leather flap bag","Handbag listing"));}
 }

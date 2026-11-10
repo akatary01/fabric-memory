@@ -34,6 +34,7 @@ fn checksum_dimensions_and_adapter_revision_are_enforced() {
         .is_err());
     let mut db = Ledger::open(&root.path().join("db"), &target, 2).unwrap();
     let e = Event {
+        access: Default::default(),
         version: 1,
         id: uuid::Uuid::new_v4().to_string(),
         actor: uuid::Uuid::new_v4().to_string(),

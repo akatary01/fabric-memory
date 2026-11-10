@@ -6,6 +6,7 @@ fn space() -> String {
 }
 fn event(actor: &str, id: &str, clock: u64, deleted: bool) -> Event {
     Event {
+        access: Default::default(),
         version: 1,
         id: id.into(),
         actor: actor.into(),
@@ -148,4 +149,19 @@ fn shared_database_handles_serialize_clock_allocation() {
         .unwrap();
     assert_eq!(one.clock + 1, two.clock);
     assert_eq!(one.actor, two.actor);
+}
+
+#[test]
+fn clear_all_memories_is_atomic_and_exceeds_page_limit() {
+    use fabric_core::Access;
+    let dir=tempdir().unwrap();let path=dir.path().join("clear.sqlite");
+    let mut ledger=Ledger::open(&path,&space(),3).unwrap();
+    for i in 0..205 {
+        ledger.put_with_access(&format!("note-{i}"),"remembered",Some(Embedding{space:space(),values:vec![1.,0.,0.]}),Access{scope:if i%2==0{"public"}else{"private"}.into(),..Default::default()}).unwrap();
+    }
+    ledger.put_with_access("last-note","last memory",Some(Embedding{space:space(),values:vec![1.,0.,0.]}),Default::default()).unwrap();
+    assert!(ledger.clear(205).is_err());assert_eq!(ledger.status().unwrap().live_memories,206);
+    assert_eq!(ledger.clear(206).unwrap(),206);let status=ledger.status().unwrap();assert_eq!(status.live_memories,0);assert_eq!(status.tombstones,206);assert_eq!(status.events,412);
+    drop(ledger);let ledger=Ledger::open(&path,&space(),3).unwrap();assert_eq!(ledger.status().unwrap().live_memories,0);
+    let events=ledger.events().unwrap();assert!(events.iter().any(|e|e.deleted && e.access.scope=="private"));assert!(events.iter().any(|e|!e.deleted && e.text=="remembered"));
 }

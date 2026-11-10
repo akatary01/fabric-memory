@@ -9,23 +9,44 @@ pub struct Client {
 }
 impl Client {
     pub fn load(path: &Path) -> Result<Self, String> {
+        let beacon = path
+            .parent()
+            .ok_or("Missing beacon settings")?
+            .join("beacon.json");
         let config: Value = serde_json::from_slice(
-            &std::fs::read(path).map_err(|_| "Run npm run sync:setup first")?,
+            &std::fs::read(beacon)
+                .map_err(|_| "Connect a Memory beacon in Devices to enable sync")?,
         )
         .map_err(|_| "Invalid sync configuration")?;
-        let certificate = std::fs::read(
-            config
-                .get("ca_certificate")
-                .unwrap_or(&config["certificate"])
-                .as_str()
-                .ok_or("Missing certificate")?,
-        )
-        .map_err(|_| "Cannot read sync certificate")?;
-        let cert =
-            reqwest::Certificate::from_pem(&certificate).map_err(|_| "Invalid sync certificate")?;
-        let http = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .add_root_certificate(cert)
+        let mut builder = reqwest::blocking::Client::builder();
+        if config["ca_der"].is_string() {
+            return Ok(Self{http:crate::beacon::http_config(&config)?,base:crate::beacon::endpoint(config["url"].as_str().ok_or("Missing beacon URL")?)?,token:config["token"].as_str().ok_or("Missing credential")?.into()});
+        }
+        if config.get("ca_certificate").is_some() {
+            let certificate = std::fs::read(
+                config
+                    .get("ca_certificate")
+                    .unwrap_or(&config["certificate"])
+                    .as_str()
+                    .ok_or("Missing certificate")?,
+            )
+            .map_err(|_| "Cannot read sync certificate")?;
+            let cert = reqwest::Certificate::from_pem(&certificate)
+                .map_err(|_| "Invalid sync certificate")?;
+            builder = builder.add_root_certificate(cert);
+        }
+        let base = config["url"].as_str().ok_or("Missing beacon URL")?;
+        let url = reqwest::Url::parse(base).map_err(|_| "Invalid beacon URL")?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("Invalid beacon URL".into());
+        }
+        let http = builder
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(100))
@@ -34,10 +55,7 @@ impl Client {
         // The desktop uses loopback; the paired iPhone uses the Mac's .local name.
         Ok(Self {
             http,
-            base: format!(
-                "https://127.0.0.1:{}",
-                config["port"].as_u64().ok_or("Missing port")?
-            ),
+            base: base.trim_end_matches('/').into(),
             token: config["token"]
                 .as_str()
                 .ok_or("Missing pairing credential")?
@@ -56,6 +74,11 @@ impl Client {
                 .into());
         }
         Ok(value)
+    }
+    pub fn permits(&self, event: &Event, actor: &str) -> bool {
+        event.actor == actor
+            || event.access.scope == "public"
+
     }
     pub fn push(&self, events: &[Event]) -> Result<u64, String> {
         if events.is_empty() {

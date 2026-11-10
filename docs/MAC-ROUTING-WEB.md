@@ -1,6 +1,6 @@
 # Mac answering and web retrieval
 
-Run `npm run mac`. The launcher prepares the existing local LFM3 runtime and a
+Run `fabric-memory run`. The launcher prepares the existing local LFM3 runtime and a
 private SearXNG installation once, then builds and opens the Tauri app.
 The iPhone continues answering independently with its own model.
 
@@ -19,7 +19,7 @@ Use manual mode when you need a fixed provider.
 
 For cloud, put `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1-mini`), and
 `FABRIC_CLOUD_ENABLED=true` in `apps/mac/.env`, then quit and reopen with
-`npm run mac`. The key stays in the Rust backend. Cloud receives the prompt,
+`fabric-memory run`. The key stays in the Rust backend. Cloud receives the prompt,
 up to three selected memory passages, bounded recent conversation, and any
 retrieved web context. Requests set `store:false`; provider retention policies
 still apply. Auto can send this context to cloud when enabled.
@@ -40,7 +40,7 @@ SearXNG is self-hosted on `127.0.0.1:8877`; it aggregates public engines without
 paid API key. Its source is pinned and hash checked by `tools/web_search.py`.
 The service and private Python environment live in
 `~/Library/Application Support/local.memoryfabric.mac/WebSearch`.
-`npm run web:setup` repairs/starts it independently. The launch agent is
+`python3 tools/web_search.py` repairs/starts it independently. The launch agent is
 `~/Library/LaunchAgents/local.memoryfabric.search.plist`.
 Advanced users can set `FABRIC_SEARCH_URL` to another compatible search endpoint.
 

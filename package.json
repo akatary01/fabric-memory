@@ -1,14 +1,15 @@
 {
   "name": "memory-fabric",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "scripts": {
-    "ios": "node tools/ios.mjs",
-    "mac": "node tools/mac.mjs",
-    "sync:setup": "/usr/bin/python3 tools/sync/setup.py",
-    "llm:setup": "/usr/bin/python3 tools/local_llm.py",
-    "web:setup": "/usr/bin/python3 tools/web_search.py"
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "fabric-memory": "bin/fabric-memory"
+  },
+  "devDependencies": {
+    "jsdom": "31.0.0"
   }
 }

@@ -6,6 +6,7 @@ public struct Hit: Codable {
     public let text: String
     public let score: Float
     public let origin: String
+    public let access:MemoryAccess?
 }
 public struct Status: Codable {
     public let actor: String
@@ -97,11 +98,14 @@ public final class Ledger {
         return true
     }
     @discardableResult
-    public func put(memory: String, text: String, embedding: Embedding?) throws -> Event {
+    public func put(memory: String, text: String, embedding: Embedding?,access:MemoryAccess?=nil) throws -> Event {
         lock.lock(); defer { lock.unlock() }
         return try transaction {
             let clock = UInt64(try rows("SELECT COALESCE(MAX(clock),0)+1 FROM events")[0][0]!)!
-            let event = Event(actor: actor, clock: clock, memory: memory, deleted: embedding == nil, text: text, embedding: embedding)
+            var policy=access
+            if policy?.scope=="restricted"{policy=MemoryAccess(scope:"private",reason:"Private memory")}
+            if embedding == nil,let raw=try rows("SELECT event FROM heads WHERE memory=?",[memory]).first?[0]{policy=try decode(Event.self,raw).access}
+            let event = Event(actor: actor, clock: clock, memory: memory, deleted: embedding == nil, text: text, embedding: embedding,access:policy)
             try event.validate()
             if let e = embedding { try require(e.space == space && e.values.count == dimension, "native embedding mismatch") }
             try insert(event, vector: embedding)
@@ -135,6 +139,10 @@ public final class Ledger {
             return count
         }
     }
+    public func current(limit:Int=200) throws -> [Event] {
+        lock.lock();defer{lock.unlock()}
+        return try rows("SELECT event FROM heads WHERE vector IS NOT NULL ORDER BY memory LIMIT ?",[String(min(max(limit,1),200))]).map{try decode(Event.self,$0[0]!)}
+    }
     public func events() throws -> [Event] {
         lock.lock(); defer { lock.unlock() }
         return try rows("SELECT payload FROM events ORDER BY id").map { try decode(Event.self, $0[0]!) }
@@ -154,7 +162,7 @@ public final class Ledger {
             let event = try decode(Event.self, row[0]!)
             let vector = try normalize(decode(Embedding.self, row[1]!).values)
             let score = zip(q, vector).reduce(Float(0)) { $0 + $1.0*$1.1 }
-            hits.append(Hit(memory: event.memory, text: event.text, score: score, origin: event.actor))
+            hits.append(Hit(memory: event.memory, text: event.text, score: score, origin: event.actor,access:event.access))
         }
         hits.sort { $0.score == $1.score ? $0.memory < $1.memory : $0.score > $1.score }
         return Array(hits.prefix(min(k,100)))

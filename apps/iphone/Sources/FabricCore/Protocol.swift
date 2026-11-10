@@ -20,6 +20,14 @@ public struct Embedding: Codable, Equatable {
     public let values: [Float]
     public init(space: String, values: [Float]) { self.space = space; self.values = values }
 }
+public struct MemoryAccess: Codable, Equatable {
+    public let scope:String
+    public let allowed_devices:[String]
+    public let reason:String
+    public init(scope:String,allowed_devices:[String]=[],reason:String=""){self.scope=scope;self.allowed_devices=allowed_devices;self.reason=reason}
+    public var syncable:Bool{scope=="public"}
+    public func validate() throws {try require(["private","public","restricted"].contains(scope) && reason.utf8.count<=1000 && allowed_devices.count<=64,"Invalid memory access");try require(allowed_devices.allSatisfy{$0.count==32 && $0.utf8.allSatisfy{(48...57).contains($0)||(97...102).contains($0)}},"Invalid approved device");try require(scope=="restricted" || allowed_devices.isEmpty,"Only restricted memories have approved devices")}
+}
 public struct Event: Codable, Equatable {
     public let version: Int
     public let id: String
@@ -29,13 +37,15 @@ public struct Event: Codable, Equatable {
     public let deleted: Bool
     public let text: String
     public let embedding: Embedding?
+    public let access:MemoryAccess?
 
     public init(version: Int = 1, id: String = Foundation.UUID().uuidString.lowercased(), actor: String, clock: UInt64,
-                memory: String, deleted: Bool = false, text: String, embedding: Embedding?) {
+                memory: String, deleted: Bool = false, text: String, embedding: Embedding?,access:MemoryAccess?=nil) {
         self.version = version; self.id = id; self.actor = actor; self.clock = clock
-        self.memory = memory; self.deleted = deleted; self.text = text; self.embedding = embedding
+        self.memory = memory; self.deleted = deleted; self.text = text; self.embedding = embedding;self.access=access
     }
     public func validate() throws {
+        try access?.validate()
         try require(version == 1, "unsupported event version")
         for value in [id, actor] {
             try require(Foundation.UUID(uuidString: value)?.uuidString.lowercased() == value, "invalid UUID")
@@ -67,8 +77,9 @@ public func readEvents(_ url: URL) throws -> [Event] {
     try require(lines.count <= 10_000, "too many events")
     return try lines.map { line in
         let object = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
-        let allowed: Set<String> = ["version","id","actor","clock","memory","deleted","text","embedding"]
+        let allowed: Set<String> = ["version","id","actor","clock","memory","deleted","text","embedding","access"]
         try require(object != nil && Set(object!.keys).isSubset(of: allowed), "unknown event field")
+        if let access=object?["access"] as? [String:Any]{try require(Set(access.keys).isSubset(of:["scope","allowed_devices","reason"]),"Unknown access field")}
         if let e = object?["embedding"] as? [String: Any] {
             try require(Set(e.keys).isSubset(of: ["space", "values"]), "unknown embedding field")
         }

@@ -1,5 +1,5 @@
 productName = "Memory Fabric"
-version = "0.1.0"
+version = "0.2.0"
 identifier = "local.memoryfabric.mac"
 
 [build]
@@ -11,13 +11,15 @@ withGlobalTauri = true
 [[app.windows]]
 label = "main"
 title = "Memory Fabric"
-width = 1120
-height = 820
+width = 1000
+height = 740
 minWidth = 760
 minHeight = 620
+decorations = false
+transparent = false
 
 [app.security]
-csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost"
 
 [bundle]
 active = false

@@ -1,8 +1,8 @@
 # Mac prompt answering
 
-Run `npm run mac` and use **Ask this Mac → Send**. The first launch installs the
+Run `fabric-memory run` and use **Ask this Mac → Send**. The first launch installs the
 local runtime and downloads the model; later launches reuse them. No API key is
-needed for Mac prompt answering. `npm run llm:setup` prepares the generator alone.
+needed for Mac prompt answering. `python3 tools/local_llm.py` prepares the generator alone.
 
 The separate Mac UI invokes Rust. Rust embeds the prompt with MPNet, retrieves
 up to three memories (including compatible imported vectors), and sends that
@@ -20,7 +20,7 @@ configured to bound memory use. Inference uses Ollama's native Apple Silicon
 runtime. MPNet remains the separate embedding model.
 
 Set `FABRIC_LOCAL_MODEL=lfm3:1.7b-q4_K_M` in `apps/mac/.env` to select another installed
-local model, then run `npm run mac`. Choosing a larger model is a deliberate
+local model, then run `fabric-memory run`. Choosing a larger model is a deliberate
 hardware tradeoff. The phone has its own bundled local generator; see PHONE-LOCAL-LLM.md.
 
 Runtime and model data live outside iCloud Documents at:

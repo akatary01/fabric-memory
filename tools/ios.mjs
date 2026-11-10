@@ -59,14 +59,14 @@ try {
   repairPreparedAssets();
   if (!prepared() || process.argv.includes('--prepare')) {
     console.log('First-time setup: downloading models and preparing the translation demo. This takes a few minutes.');
-    if (!available('cargo')) throw new Error('Install the Rust toolchain (rustup.rs), then run npm run ios again.');
+    if (!available('cargo')) throw new Error('Install the Rust toolchain (rustup.rs), then run fabric-memory run --phone again.');
     const uv = available('uv');
     const python = join(root, '.venv/bin/python');
     if (!existsSync(python)) {
       if (uv) run('uv', ['venv', '.venv', '--python', '3.12', '--allow-existing']);
       else {
         if (!available('python3', ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)'])) {
-          throw new Error('Install Python 3.12+ or uv, then run npm run ios again.');
+          throw new Error('Install Python 3.12+ or uv, then run fabric-memory run --phone again.');
         }
         run('python3', ['-m', 'venv', '.venv']);
       }

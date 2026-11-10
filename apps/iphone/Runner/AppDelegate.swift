@@ -60,7 +60,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let window = UIWindow(windowScene:windowScene)
         window.rootViewController = UINavigationController(rootViewController:ChatController()); window.backgroundColor = .systemBackground
         window.makeKeyAndVisible(); self.window = window
+        if let url=connectionOptions.urlContexts.first?.url{(window.rootViewController as? UINavigationController)?.viewControllers.first.flatMap{$0 as? ChatController}?.acceptPairingLink(url)}
     }
+    func scene(_ scene:UIScene,openURLContexts contexts:Set<UIOpenURLContext>){if let url=contexts.first?.url{(window?.rootViewController as? UINavigationController)?.viewControllers.first.flatMap{$0 as? ChatController}?.acceptPairingLink(url)}}
 }
 
 @main

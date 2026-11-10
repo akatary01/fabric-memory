@@ -1,7 +1,7 @@
 use crate::{adapter::Adapter, normalized, sha256, Embedding, Event, MAX_EVENTS};
 use anyhow::{ensure, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{io::Write, path::Path, process::Command};
 
 pub struct Ledger {
@@ -11,13 +11,14 @@ pub struct Ledger {
     pub dimension: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Hit {
     pub memory: String,
     pub text: String,
     pub score: f32,
     pub origin: String,
     pub translated: bool,
+    pub access: crate::Access,
 }
 
 #[derive(Serialize)]
@@ -42,6 +43,11 @@ impl Ledger {
             std::fs::create_dir_all(p)?;
         }
         let db = Connection::open(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
           CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -77,6 +83,27 @@ impl Ledger {
     }
 
     pub fn put(&mut self, memory: &str, text: &str, embedding: Option<Embedding>) -> Result<Event> {
+        self.put_with_access(memory, text, embedding, crate::Access::default())
+    }
+    pub fn put_with_access(
+        &mut self,
+        memory: &str,
+        text: &str,
+        embedding: Option<Embedding>,
+        mut access: crate::Access,
+    ) -> Result<Event> {
+        if access.scope == "restricted" { access = crate::Access { scope:"private".into(), allowed_devices:vec![], reason:"Private memory".into() }; }
+        if embedding.is_none() {
+            let existing: Option<String> = self
+                .db
+                .query_row("SELECT event FROM heads WHERE memory=?1", [memory], |r| {
+                    r.get(0)
+                })
+                .optional()?;
+            if let Some(raw) = existing {
+                access = serde_json::from_str::<Event>(&raw)?.access;
+            }
+        }
         // Exclusive write transaction also serializes clock allocation across processes.
         let tx = self
             .db
@@ -85,6 +112,7 @@ impl Ledger {
             r.get(0)
         })?;
         let event = Event {
+            access,
             version: 1,
             id: uuid::Uuid::new_v4().to_string(),
             actor: self.actor.clone(),
@@ -224,6 +252,26 @@ impl Ledger {
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
 
+    /// Forget every live memory atomically, preserving immutable deletion history.
+    pub fn clear(&mut self, expected: usize) -> Result<usize> {
+        let tx = self.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let live: Vec<Event> = {
+            let mut statement=tx.prepare("SELECT event FROM heads ORDER BY memory")?;
+            let rows=statement.query_map([],|row|row.get::<_,String>(0))?;
+            rows.map(|raw|Ok(serde_json::from_str::<Event>(&raw?)?)).collect::<Result<Vec<_>>>()?.into_iter().filter(|event|!event.deleted).collect()
+        };
+        ensure!(live.len()==expected,"Memory changed while the confirmation was open. Review the count and try again.");
+        let clock:u64=tx.query_row("SELECT COALESCE(MAX(clock),0)+1 FROM events",[],|row|row.get(0))?;
+        for (index,previous) in live.iter().enumerate() {
+            let event=Event{version:1,id:uuid::Uuid::new_v4().to_string(),actor:self.actor.clone(),clock:clock+index as u64,
+                memory:previous.memory.clone(),deleted:true,text:String::new(),embedding:None,access:previous.access.clone()};
+            event.validate()?;
+            Self::insert(&tx,&event,None)?;
+        }
+        tx.commit()?;
+        Ok(live.len())
+    }
+
     pub fn export(&self, path: &Path) -> Result<()> {
         let tmp = path.with_extension("jsonl.tmp");
         let mut file = std::fs::File::create(&tmp)?;
@@ -254,6 +302,7 @@ impl Ledger {
             let values = normalized(&vector.values)?;
             let score = q.iter().zip(values).map(|(x, y)| x * y).sum();
             hits.push(Hit {
+                access: event.access,
                 translated: event
                     .embedding
                     .as_ref()

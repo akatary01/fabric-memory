@@ -44,7 +44,7 @@ def encoded(value):
 
 def validate(event, spaces):
     required = {"version","id","actor","clock","memory","deleted","text"}
-    if not isinstance(event,dict) or not required <= event.keys() or event.keys()-required-{"embedding"}:
+    if not isinstance(event,dict) or not required <= event.keys() or event.keys()-required-{"embedding","access"}:
         raise ValueError("Invalid event fields")
     if type(event["version"]) is not int or event["version"] != 1: raise ValueError("Unsupported event version")
     for key in ["id","actor"]:
@@ -53,6 +53,12 @@ def validate(event, spaces):
     memory=event["memory"]
     if not isinstance(memory,str) or not 0<len(memory)<=128 or any(not 33<=ord(c)<=126 for c in memory): raise ValueError("Invalid memory ID")
     if type(event["deleted"]) is not bool or not isinstance(event["text"],str) or len(event["text"].encode())>65536: raise ValueError("Invalid text")
+    access=event.get("access",{"scope":"public","allowed_devices":[],"reason":""})
+    if not isinstance(access,dict) or set(access)-{"scope","allowed_devices","reason"} or access.get("scope") not in ("public","private","restricted"):raise ValueError("Invalid memory access")
+    allowed=access.get("allowed_devices",[])
+    if not isinstance(allowed,list) or len(allowed)>64 or any(not isinstance(d,str) or not re.fullmatch("[a-f0-9]{32}",d) for d in allowed):raise ValueError("Invalid approved devices")
+    if access["scope"]!="restricted" and allowed:raise ValueError("Only restricted memories have approved devices")
+    if not isinstance(access.get("reason",""),str) or len(access.get("reason","").encode())>1000:raise ValueError("Invalid access reason")
     result=dict(event)
     if event["deleted"]:
         if event["text"] or event.get("embedding") is not None: raise ValueError("Invalid tombstone")
@@ -125,12 +131,24 @@ class Store:
                 commit=self.git("commit-tree",tree,"-p",old,data=b"Sync immutable memory events\n").decode().strip()
                 self.git("update-ref","refs/heads/main",commit,old)
             return {"commit":commit,"inserted":len(added)}
-    def page(self,rev,after,limit):
+    def page(self,rev,after,limit,device=None,enrollment=None,admin=True):
         rev=rev or self.head();paths=self.paths(rev)
         if after:
             name="events/"+after+".json"
             if name not in paths:raise ValueError("Unknown page cursor")
             paths=paths[paths.index(name)+1:]
+        if not admin:
+            latest={}
+            for event in self.all(self.head()):
+                old=latest.get(event['memory'])
+                if old is None or (event['clock'],event['actor'],event['id'])>(old['clock'],old['actor'],old['id']):latest[event['memory']]=event
+            visible=set()
+            for memory,event in latest.items():
+                access=event.get('access',{'scope':'public'})
+                if access['scope']=='public':visible.add(memory)
+            # Apply current ACLs even to requests for an older Git revision.
+            allowed_ids={e['id'] for e in self.all(rev) if e['memory'] in visible and e.get('access',{}).get('scope','public')=='public'}
+            paths=[p for p in paths if p[7:-5] in allowed_ids]
         events=[];size=0
         for event in self.read(rev,paths[:min(max(limit,1),250)]):
             n=len(encoded(event))
@@ -209,9 +227,22 @@ class Handler(BaseHTTPRequestHandler):
     def handle_request(self):
         config=self.server.config;store=self.server.store
         try:
-            if not local_peer(self.client_address[0],config):return self.reply(403,{"error":"Local-network access only"})
+            if not config.get("allow_remote",False) and not local_peer(self.client_address[0],config):return self.reply(403,{"error":"Local-network access only"})
             auth=self.headers.get("Authorization","")
-            if not hmac.compare_digest(auth,"Bearer "+config["token"]):return self.reply(401,{"error":"Pair this device first"})
+            route=urlsplit(self.path);path=unquote(route.path)
+            prefix=config.get("path_prefix","")
+            if prefix:
+                if not path.startswith(prefix+"/"):return self.reply(404,{"error":"Unknown beacon route"})
+                path=path[len(prefix):]
+            enrollment=getattr(self.server,"enrollment",None)
+            if path=="/v1/beacon" and self.command=="GET" and enrollment:
+                return self.reply(200,{"service":"memory-fabric-beacon","protocol":2,"name":config.get("name","Memory beacon"),"url":config["public_url"]})
+            token=auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
+            admin=hmac.compare_digest(token,config["token"])
+            device=enrollment.identity(token) if enrollment else None
+            authenticated=admin or bool(device)
+            join=path=="/v1/join" and self.command=="POST" and enrollment is not None
+            if not authenticated and not join:return self.reply(401,{"error":"Pair this device with a current beacon invitation"})
             transfer=self.headers.get("Transfer-Encoding","").lower()
             if transfer:
                 if transfer!="chunked":raise ValueError("Unsupported transfer encoding")
@@ -236,8 +267,15 @@ class Handler(BaseHTTPRequestHandler):
                 if length<0 or length>LIMIT:return self.reply(413,{"error":"Transfer exceeds limit"})
                 raw=self.rfile.read(length)
                 if len(raw)!=length:raise ValueError("Incomplete transfer")
-            route=urlsplit(self.path);path=unquote(route.path)
+            if join:
+                value=json.loads(raw)
+                return self.reply(200,enrollment.join(value.get("invitation"),value.get("device_name")))
+            if path=="/v1/invitations" and self.command=="POST" and enrollment:return self.reply(200,enrollment.invite())
+            if path=="/v1/devices" and self.command=="GET" and enrollment:return self.reply(200,{"devices":[{"id":d["id"],"name":d["name"]} for d in enrollment.devices() if not d["revoked"]]})
+            if path=="/v1/revoke" and self.command=="POST" and admin and enrollment:
+                enrollment.revoke(json.loads(raw)["device_id"]);return self.reply(200,{"revoked":True})
             if path.startswith("/fabric.git/"):
+                if not admin:return self.reply(403,{"error":"Device sync uses scoped event endpoints. Raw Git is owner-only."})
                 if ".." in path.split("/"):raise ValueError("Invalid Git path")
                 env=dict(os.environ,GIT_PROJECT_ROOT=str(Path(config["root"])/"repositories"),GIT_HTTP_EXPORT_ALL="1",
                     PATH_INFO=path,QUERY_STRING=route.query,REQUEST_METHOD=self.command,CONTENT_TYPE=self.headers.get("Content-Type",""),
@@ -254,12 +292,26 @@ class Handler(BaseHTTPRequestHandler):
                     if key.lower()=="status":status=int(value.strip().split()[0])
                     if key.lower()=="content-type":kind=value.strip()
                 return self.reply(status,data,kind)
-            if path=="/v1/status" and self.command=="GET":return self.reply(200,{"commit":store.head(),"service":"memory-fabric","protocol":1})
+            if path=="/v1/status" and self.command=="GET":return self.reply(200,{"commit":store.head(),"service":"memory-fabric","protocol":2,"scoped_access":False})
             if path=="/v1/events" and self.command=="GET":
                 query=parse_qs(route.query)
-                return self.reply(200,store.page(query.get("commit",[None])[0],query.get("after",[None])[0],int(query.get("limit",["250"])[0])))
-            if path=="/v1/events" and self.command=="POST":return self.reply(200,store.append(json.loads(raw)["events"]))
-            if path=="/v1/prompt" and self.command=="POST":return self.reply(200,prompt(config,json.loads(raw)))
+                return self.reply(200,store.page(query.get("commit",[None])[0],query.get("after",[None])[0],int(query.get("limit",["250"])[0]),device,enrollment,admin))
+            if path=="/v1/events" and self.command=="POST":
+                incoming=json.loads(raw)["events"]
+                with LOCK:
+                    validated=[validate(e,store.spaces) for e in incoming]
+                    existing=store.all(store.head());by_id={e['id']:e for e in existing};scoped={e['memory'] for e in existing if e.get('access',{}).get('scope')=='restricted'}
+                    for event in validated:
+                        access=event.get('access',{'scope':'public'})
+                        if access['scope']!='public':raise ValueError('Only public memories can sync; private memories stay on their device')
+                        if event['id'] in by_id:continue
+                        owner=enrollment.owner(event['memory']) if enrollment else None
+                        if event['memory'] in scoped and not admin and owner not in (None,device):return self.reply(403,{'error':'Only the memory owner can change restricted sharing'})
+                    result=store.append(validated)
+                    if enrollment:
+                        for event in validated:enrollment.claim(event['memory'],device or 'owner')
+                return self.reply(200,result)
+            if path=="/v1/prompt" and self.command=="POST" and config.get("allow_prompts",False):return self.reply(200,prompt(config,json.loads(raw)))
             return self.reply(404,{"error":"Unknown route"})
         except (ValueError,KeyError,OverflowError,struct.error) as error:self.reply(400,{"error":str(error)})
         except Exception:self.reply(503,{"error":"Mac service is temporarily unavailable"})

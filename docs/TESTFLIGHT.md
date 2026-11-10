@@ -11,7 +11,7 @@ Connect validation or physical iPhone execution is claimed before your upload.
 4. Type a prompt and tap Send. LFM3 runs on the iPhone using MiniLM-retrieved
    memory. Pairing, the Mac server and a GPT key are not required for chat.
 5. For memory sync, connect the Mac and phone to a private Wi-Fi network or
-   Personal Hotspot. Run `npm run mac`, click Pair iPhone, transfer the JSON to
+   Personal Hotspot. Run `fabric-memory run`, click Pair iPhone, transfer the JSON to
    the phone, and select it using Connect Mac. Then tap Sync. Import a fresh
    pairing file after changing networks. Build 3 supports numeric IPv6 URLs.
 6. Diagnostics runs the separate real MiniLM parity, learned adapter retrieval

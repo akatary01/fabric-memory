@@ -20,6 +20,55 @@ pub struct Embedding {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct Access {
+    pub scope: String,
+    #[serde(default)]
+    pub allowed_devices: Vec<String>,
+    #[serde(default)]
+    pub reason: String,
+}
+impl Default for Access {
+    fn default() -> Self {
+        Self {
+            scope: "public".into(),
+            allowed_devices: vec![],
+            reason: String::new(),
+        }
+    }
+}
+impl Access {
+    pub fn legacy(&self) -> bool {
+        self == &Self::default()
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            ["private", "public", "restricted"].contains(&self.scope.as_str()),
+            "Invalid memory visibility"
+        );
+        ensure!(
+            self.reason.len() <= 1000 && self.allowed_devices.len() <= 64,
+            "Invalid memory access metadata"
+        );
+        ensure!(
+            self.allowed_devices.iter().all(|id| id.len() == 32
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())),
+            "Invalid approved device ID"
+        );
+        ensure!(
+            self.scope == "restricted" || self.allowed_devices.is_empty(),
+            "Only restricted memories have approved devices"
+        );
+        Ok(())
+    }
+    pub fn syncable(&self) -> bool {
+        self.scope == "public"
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Event {
     pub version: u32,
     pub id: String,
@@ -29,10 +78,13 @@ pub struct Event {
     pub deleted: bool,
     pub text: String,
     pub embedding: Option<Embedding>,
+    #[serde(default, skip_serializing_if = "Access::legacy")]
+    pub access: Access,
 }
 
 impl Event {
     pub fn validate(&self) -> Result<()> {
+        self.access.validate()?;
         ensure!(self.version == 1, "unsupported event version");
         for id in [&self.id, &self.actor] {
             ensure!(

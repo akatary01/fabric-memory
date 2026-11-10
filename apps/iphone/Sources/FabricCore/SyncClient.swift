@@ -7,11 +7,18 @@ public struct Pairing: Codable {
     public let type:String
     public let url:String
     public let token:String
-    public let certificate_der:String
+    public let device_id:String?
+    public let certificate_der:String?
     public let ca_der:String?
+    public init(version:Int,type:String,url:String,token:String,certificate_der:String?=nil,ca_der:String?=nil,device_id:String?=nil){self.version=version;self.type=type;self.url=url;self.token=token;self.certificate_der=certificate_der;self.ca_der=ca_der;self.device_id=device_id}
     public func validate() throws {
         guard let u=URLComponents(string:url),let host=u.host else { throw FabricError("Invalid Mac address") }
-        try require(version==1 && type=="memory-fabric-pairing" && u.scheme=="https" && u.user==nil && u.password==nil && u.query==nil && (u.path.isEmpty || u.path=="/"),"Invalid pairing file")
+        try require((version==1 || version==2) && type=="memory-fabric-pairing" && u.scheme=="https" && u.user==nil && u.password==nil && u.query==nil && u.fragment==nil,"Invalid pairing file")
+        _ = try BeaconInvitation.endpoint(url)
+        try require(token.count>=32 && token.count<=256,"Invalid device credential")
+        if version==2 && certificate_der==nil && ca_der==nil {return}
+        try require(version==1 || Self.isLocal(url),"Certificate pairing requires a local beacon")
+        try require(u.path.isEmpty || u.path=="/","Local Mac pairing requires a root address")
         let numericHost=host.trimmingCharacters(in:CharacterSet(charactersIn:"[]"))
         var ipv6Address=in6_addr()
         let ipv6=numericHost.withCString{inet_pton(AF_INET6,$0,&ipv6Address)}==1
@@ -25,8 +32,14 @@ public struct Pairing: Codable {
         // paired leaf certificate and root still authenticate this exact Mac.
         let privateHost=host.hasSuffix(".local") || host=="localhost" || privateIP || unicastIPv6
         try require(privateHost && token.count>=32 && token.count<=256,"Pairing requires a local Mac address")
-        guard let data=Data(base64Encoded:certificate_der) else { throw FabricError("Invalid pairing certificate") }
+        guard let encoded=certificate_der,let data=Data(base64Encoded:encoded) else { throw FabricError("Invalid pairing certificate") }
         try require(SecCertificateCreateWithData(nil,data as CFData) != nil,"Invalid pairing certificate")
+    }
+    public static func isLocal(_ address:String)->Bool {
+        guard let host=URLComponents(string:address)?.host else{return false}
+        let parts=host.split(separator:".").compactMap{Int($0)}
+        let ip=parts.count==4 && parts.allSatisfy{(0...255).contains($0)}
+        return host=="localhost" || host.hasSuffix(".local") || (ip && (parts[0]==10 || parts==[127,0,0,1] || (parts[0]==192 && parts[1]==168) || (parts[0]==172 && (16...31).contains(parts[1]))))
     }
     public static func load() throws -> Pairing? {
         let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"local.memoryfabric.pairing",
@@ -44,6 +57,10 @@ public struct Pairing: Codable {
         if updated==errSecItemNotFound { try require(SecItemAdd(query.merging(value){_,new in new} as CFDictionary,nil)==errSecSuccess,"Could not save Mac pairing") }
         else { try require(updated==errSecSuccess,"Could not update Mac pairing") }
     }
+    public static func forget() throws {
+        let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"local.memoryfabric.pairing",kSecAttrAccount as String:"mac"]
+        let status=SecItemDelete(query as CFDictionary);try require(status==errSecSuccess || status==errSecItemNotFound,"Could not disconnect beacon")
+    }
 }
 
 public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate,@unchecked Sendable {
@@ -53,10 +70,12 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
         return URLSession(configuration:config,delegate:self,delegateQueue:nil)
     }()
     public init(pairing:Pairing) throws { try pairing.validate();self.pairing=pairing;super.init() }
+    public var baseURL:String { pairing.url }
     public func urlSession(_ session:URLSession,didReceive challenge:URLAuthenticationChallenge,completionHandler:@escaping(URLSession.AuthChallengeDisposition,URLCredential?)->Void) {
+        if pairing.certificate_der==nil { completionHandler(.performDefaultHandling,nil);return }
         guard challenge.protectionSpace.authenticationMethod==NSURLAuthenticationMethodServerTrust,
-              let trust=challenge.protectionSpace.serverTrust,let data=Data(base64Encoded:pairing.certificate_der),
-              let anchorData=Data(base64Encoded:pairing.ca_der ?? pairing.certificate_der),
+              let trust=challenge.protectionSpace.serverTrust,let encoded=pairing.certificate_der,let data=Data(base64Encoded:encoded),
+              let anchorData=Data(base64Encoded:pairing.ca_der ?? encoded),
               let cert=SecCertificateCreateWithData(nil,anchorData as CFData) else { completionHandler(.cancelAuthenticationChallenge,nil);return }
         // Trust only the explicitly paired certificate; normal TLS hostname/date checks remain.
         guard let chain=SecTrustCopyCertificateChain(trust) as? [SecCertificate],let leaf=chain.first,
@@ -78,11 +97,11 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
             let address=pairing.url
             switch error.code {
             case .cannotFindHost:
-                throw FabricError("Cannot resolve the Mac address \(address). Generate a new Pair iPhone file on the Mac and import it again; IPv6 hotspots need build 3 or later.")
+                throw FabricError("Cannot resolve the beacon at \(address). Check its URL and your network.")
             case .cannotConnectToHost,.timedOut:
-                throw FabricError("Cannot connect to \(address). Keep the Mac awake, allow Local Network access, and use a private Wi-Fi network or Personal Hotspot. Generate a new pairing file after changing networks.")
+                throw FabricError("Cannot connect to \(address). Check that the beacon is deployed and running. Local chat remains available.")
             case .serverCertificateUntrusted,.secureConnectionFailed:
-                throw FabricError("The Mac certificate could not be verified. Import the latest Pair iPhone file after changing networks.")
+                throw FabricError("The beacon’s HTTPS certificate could not be verified. Check the address and server certificate.")
             default:throw error
             }
         }
@@ -94,12 +113,14 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
         }
         return try JSONDecoder().decode(T.self,from:data)
     }
+    public struct BeaconDevice:Decodable{public let id:String;public let name:String}
+    public func devices() async throws ->[BeaconDevice]{struct Directory:Decodable{let devices:[BeaconDevice]};let directory:Directory=try await request("v1/devices");return directory.devices.filter{$0.id != pairing.device_id}}
     private struct Push:Codable { let events:[Event] }
     private struct Ack:Decodable { let commit:String;let inserted:Int }
     private struct Page:Decodable { let commit:String;let events:[Event];let next_after:String? }
     public struct SyncResult:Codable { public let uploaded:Int;public let downloaded:Int;public let commit:String }
     public func sync(ledger:Ledger,adapter:Adapter) async throws -> SyncResult {
-        let events=try ledger.events();var uploaded=0;var downloaded=0
+        let events=try ledger.events().filter{$0.access?.syncable ?? true};var uploaded=0;var downloaded=0
         for start in stride(from:0,to:events.count,by:100) {
             let ack:Ack=try await request("v1/events",body:JSONEncoder().encode(Push(events:Array(events[start..<min(start+100,events.count)]))))
             uploaded+=ack.inserted
@@ -110,7 +131,7 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
             if let commit { query.append(URLQueryItem(name:"commit",value:commit)) }
             if let after { query.append(URLQueryItem(name:"after",value:after)) }
             let page:Page=try await request("v1/events",query:query)
-            downloaded+=try ledger.ingest(page.events,adapter:adapter);commit=page.commit;after=page.next_after
+            let allowed=page.events.filter{event in guard let access=event.access else{return true};if event.actor==ledger.actor{return true};if access.scope=="private"{return false};return access.scope=="public"};downloaded+=try ledger.ingest(allowed,adapter:adapter);commit=page.commit;after=page.next_after
         } while after != nil
         return SyncResult(uploaded:uploaded,downloaded:downloaded,commit:commit ?? "")
     }

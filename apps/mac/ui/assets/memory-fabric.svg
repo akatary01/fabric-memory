@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64" role="img" aria-label="Memory Fabric">
+  <defs><linearGradient id="paper" x2="0" y2="1"><stop stop-color="#f8f6ed"/><stop offset="1" stop-color="#e7e4d8"/></linearGradient></defs>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="url(#paper)" stroke="#d8d5c9" stroke-width=".6"/>
+  <path d="M17.5 46V18h29" fill="none" stroke="#414542" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M28.5 46V29h18" fill="none" stroke="#9b884f" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M39.5 46v-6h7" fill="none" stroke="#414542" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

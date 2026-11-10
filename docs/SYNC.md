@@ -1,13 +1,13 @@
 # Private Mac Git hosting and phone prompts
 
 The host runs on this Mac, under your user account, not a hosted Git provider.
-`npm run sync:setup` installs/reuses it; `npm run mac` also ensures it is running.
+`fabric-memory launch-git` installs/reuses it; `fabric-memory run` also ensures it is running.
 It starts again when you log in. The Mac must be awake and reachable on the same
 local network as the iPhone. No router port forwarding or Remote Login is enabled.
 
 ## Use
 
-1. Run `npm run mac`.
+1. Run `fabric-memory run`.
 2. Click **Pair iPhone**. AirDrop the selected private pairing JSON to your iPhone.
 3. Install the updated phone build through TestFlight. Tap **Connect Mac**, select
    that JSON from Files, and allow local-network access when iOS asks.
@@ -16,7 +16,7 @@ local network as the iPhone. No router port forwarding or Remote Login is enable
    and runs LFM3 on the phone; pairing is not required for chatting.
 
 Put `OPENAI_API_KEY` in `apps/mac/.env`. `OPENAI_MODEL` defaults to `gpt-4.1-mini`
-and can be changed. Re-run `npm run mac` or `npm run sync:setup` after editing
+and can be changed. Re-run `fabric-memory run` or `fabric-memory launch-git` after editing
 the `.env` file to refresh the private service settings. `FABRIC_CLOUD_ENABLED=false` disables cloud prompts. The key
 never goes to the phone, Git, pairing file, or WebView. Existing `.env` files are
 not modified. If you previously set cloud execution to false, change it to true
@@ -42,7 +42,7 @@ Runtime data is in `~/Library/Application Support/local.memoryfabric.mac/Sync/`:
 The login service is `~/Library/LaunchAgents/local.memoryfabric.sync.plist`.
 The pairing file uses the Mac’s current LAN IPv4 or IPv6 address on port 8765,
 never localhost. The Mac’s `.local` hostname remains in the server certificate.
-Re-run `npm run mac` or `npm run sync:setup` after changing networks, and import
+Re-run `fabric-memory run` or `fabric-memory launch-git` after changing networks, and import
 the newly generated pairing file if the address or certificate changed.
 The Mac’s own client deliberately uses loopback; that address is not sent to the phone. All routes require
 the pairing credential. The phone pins the exact certificate and still checks
@@ -92,7 +92,7 @@ push optimization. The existing stress harness can expose that scaling limit.
 ## Manage
 
 ```sh
-npm run sync:setup
+fabric-memory launch-git
 launchctl print gui/$(id -u)/local.memoryfabric.sync
 ```
 
