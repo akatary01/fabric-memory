@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Prepare a loopback-only local generator; reuse it on subsequent Mac launches."""
 import fcntl
-import hashlib
 import json
 import os
 import plistlib
@@ -10,6 +9,7 @@ import tarfile
 import time
 from pathlib import Path
 from urllib.request import build_opener, ProxyHandler, Request
+from verified_download import archive_digest, download_archive
 
 PROJECT=Path(__file__).resolve().parents[1]
 ROOT=Path.home()/"Library/Application Support/local.memoryfabric.mac/LocalLLM"
@@ -25,32 +25,6 @@ def api(path,body=None,timeout=3):
 def ready():
     try:return bool(api("/api/version").get("version"))
     except Exception:return False
-
-def archive_digest(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def download_archive(url, archive):
-    # The system curl uses macOS trust independently of Python's CA bundle.
-    partial = archive.with_suffix(".partial")
-    try:
-        subprocess.run([
-            "/usr/bin/curl", "--fail", "--silent", "--show-error", "--location",
-            "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "30",
-            "--speed-limit", "1", "--speed-time", "60", "--output", str(partial), url,
-        ], check=True)
-        if archive_digest(partial) != SHA256:
-            raise SystemExit("Ollama archive checksum mismatch.")
-        partial.replace(archive)
-    except subprocess.CalledProcessError:
-        raise SystemExit("Could not download Ollama. Check the network and macOS certificate trust.") from None
-    finally:
-        partial.unlink(missing_ok=True)
-
 
 def main():
     os.umask(0o077);ROOT.mkdir(parents=True,exist_ok=True)
@@ -68,7 +42,7 @@ def main():
             if not archive.exists() or archive_digest(archive)!=SHA256:
                 print("Downloading Ollama "+VERSION+"…",flush=True)
                 url="https://github.com/ollama/ollama/releases/download/v"+VERSION+"/ollama-darwin.tgz"
-                download_archive(url, archive)
+                download_archive(url, archive, SHA256, "Ollama")
             runtime.mkdir(exist_ok=True)
             with tarfile.open(archive) as bundle:
                 for member in bundle.getmembers():

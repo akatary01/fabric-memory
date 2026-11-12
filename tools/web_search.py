@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Install a pinned, loopback-only SearXNG search service for the desktop app."""
 import fcntl
-import hashlib
 import json
 import os
 import plistlib
@@ -11,7 +10,8 @@ import subprocess
 import tarfile
 import time
 from pathlib import Path
-from urllib.request import build_opener,ProxyHandler,urlretrieve
+from urllib.request import build_opener,ProxyHandler
+from verified_download import archive_digest, download_archive
 
 REVISION="3a3dd15bfafcb645a1b45c2c6c0798a8f786aaaf"
 SHA256="1a10d9278f9b75aafab368f9f03ebc9bec653390b28091d60f961f325acb52ed"
@@ -34,14 +34,12 @@ def main():
     source=ROOT/("searxng-"+REVISION)
     if not source.exists():
         archive=ROOT/"source.tar.gz"
-        print("Downloading the open-source web search service…",flush=True)
-        urlretrieve("https://codeload.github.com/searxng/searxng/tar.gz/"+REVISION,archive)
-        if hashlib.sha256(archive.read_bytes()).hexdigest()!=SHA256:raise RuntimeError("Search service source checksum mismatch")
+        if not archive.is_file() or archive_digest(archive) != SHA256:
+            print("Downloading the open-source web search service…", flush=True)
+            url = "https://codeload.github.com/searxng/searxng/tar.gz/" + REVISION
+            download_archive(url, archive, SHA256, "SearXNG")
         with tarfile.open(archive) as bundle:
-            for item in bundle.getmembers():
-                path=Path(item.name)
-                if path.is_absolute() or ".." in path.parts or item.issym() or item.islnk():raise RuntimeError("Unsafe search source archive")
-            bundle.extractall(ROOT)
+            bundle.extractall(ROOT, filter="data")
     uv=shutil.which("uv") or str(Path.home()/".local/bin/uv")
     python=ROOT/"venv/bin/python"
     if not python.exists():run(uv,"venv",ROOT/"venv","--python","3.12","--allow-existing")
