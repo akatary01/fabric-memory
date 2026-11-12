@@ -256,6 +256,19 @@ impl Runner {
         self.wake.notify_all();
         Ok(())
     }
+    pub fn request_workspace_access(&self, folder: &std::path::Path) -> Result<bool, String> {
+        let revision = self.operation_revision();
+        let summary = format!("Allow access to {} for this task?", folder.display());
+        self.step("review", &summary, json!({"tool":"workspace_access"}));
+        let allowed = self.review_at("workspace_access", &json!({"folder":folder}), &summary, revision)?;
+        if self.revised(revision) {
+            return Err("The task changed before folder access was granted.".into());
+        }
+        self.check()?;
+        self.step(if allowed {"approved"} else {"denied"}, &summary, json!({"tool":"workspace_access"}));
+        Ok(allowed)
+    }
+
     fn ask_user(&self, question: &str, revision: usize) -> Result<(), String> {
         self.check()?;
         let mut task = self.task.lock().map_err(|_| "Agent unavailable")?;
@@ -1026,7 +1039,7 @@ impl StallGuard{fn observe(&mut self,tool:&str,args:&Value,result:Result<&Value,
 }}
 #[cfg(test)]mod stall_tests{use super::*;#[test]fn repeated_invalid_paths_stop_early_and_corrected_actions_can_progress(){let mut guard=StallGuard::default();let args=json!({"action":"list","path":"/wrong/root"});assert!(guard.observe("workspace",&args,Err("Use a relative workspace path")).is_ok());let e=guard.observe("workspace",&args,Err("Use a relative workspace path")).unwrap_err();assert!(e.contains("No progress"));assert!(e.contains("relative workspace path"));assert!(guard.observe("workspace",&json!({"action":"list","path":"."}),Ok(&json!({"files":["main.py"]}))).is_ok());}#[test]fn reading_after_an_edit_is_allowed_but_endless_listing_is_not(){let mut g=StallGuard::default();let args=json!({"action":"list","path":"."});let result=json!({"files":[]});g.observe("workspace",&args,Ok(&result)).unwrap();g.observe("workspace",&args,Ok(&result)).unwrap();assert!(g.observe("workspace",&args,Ok(&result)).is_err());g.observe("workspace",&json!({"action":"write","path":"x"}),Ok(&json!({"written":true}))).unwrap();assert!(g.observe("workspace",&args,Ok(&result)).is_ok());}}
 
-fn auto_approval_allowed(tool:&str,enabled:bool)->bool{enabled&&tool!="cloud_workspace"}
+fn auto_approval_allowed(tool:&str,enabled:bool)->bool{enabled&&!matches!(tool,"cloud_workspace"|"workspace_access")}
 #[cfg(test)]mod sharing_approval_tests{use super::*;#[test]fn automatic_commands_do_not_grant_private_workspace_sharing(){assert!(auto_approval_allowed("run_code",true));assert!(auto_approval_allowed("computer",true));assert!(!auto_approval_allowed("cloud_workspace",true));assert!(!auto_approval_allowed("run_code",false));}}
 pub fn answer_context(raw:&str)->String{
  let entries=serde_json::from_str::<Vec<Value>>(raw).unwrap_or_default();let mut out=String::new();

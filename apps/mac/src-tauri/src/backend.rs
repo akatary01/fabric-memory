@@ -253,7 +253,7 @@ Documents (JSON): {}",
         match name {
             "computer" if args["action"] == "record" => crate::computer::record(args, || run.agent.check()),
             "computer" => crate::computer::call(args),
-            "workspace" | "run_code" | "saved_tool" => run.workspace.call(name,args,run.agent.remaining()?),
+            "workspace" | "run_code" | "saved_tool" => run.workspace.call(name, args, || run.agent.remaining(), |folder| run.agent.request_workspace_access(folder)),
             "memory_search" => {
                 let query = args["query"].as_str().ok_or("Missing memory query")?;
                 if query.len() > 16000 {

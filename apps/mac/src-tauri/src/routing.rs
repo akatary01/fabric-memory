@@ -401,7 +401,15 @@ fn explicit_blender_mcp(text: &str) -> bool {
             .iter().any(|phrase| text.contains(phrase))
 }
 
-fn direct_action(text:&str)->Option<ActionTask>{if permission_denial(text)||advisory_request(text){return None;}let kind=if explicit_blender_mcp(text){"blender_mcp"}else if blender_request(text){"blender"}else if computer_intent(text){"computer"}else if workspace_listing(text) || coding_request(text){"workspace"}else{return None;};Some(ActionTask{kind,request:text.into()})}
+fn explicit_file_action(question: &str) -> bool {
+    let text = normalized(question);
+    let has_path = text.contains("~/") || text.contains("/users/") || text.contains("/volumes/")
+        || text.contains("/tmp/") || text.contains(" folder") || text.contains(" directory");
+    has_path && ["list ", "show ", "read ", "inspect ", "look in ", "what files "]
+        .iter().any(|prefix| text.starts_with(prefix) || text.starts_with(&format!("please {prefix}")))
+}
+
+fn direct_action(text:&str)->Option<ActionTask>{if permission_denial(text)||advisory_request(text){return None;}let kind=if explicit_blender_mcp(text){"blender_mcp"}else if blender_request(text){"blender"}else if explicit_file_action(text){"workspace"}else if computer_intent(text){"computer"}else if workspace_listing(text) || coding_request(text){"workspace"}else{return None;};Some(ActionTask{kind,request:text.into()})}
 fn stored_task(value:&serde_json::Value)->Option<ActionTask>{let kind=match value["kind"].as_str(){Some("computer")=>"computer",Some("workspace")=>"workspace",Some("blender")=>"blender",Some("blender_mcp")=>"blender_mcp",_=>return None};let request=value["request"].as_str()?.trim();if request.is_empty()||request.len()>4000{return None;}Some(ActionTask{kind:if explicit_blender_mcp(request){"blender_mcp"}else if blender_request(request){"blender"}else{kind},request:request.into()})}
 pub fn tool_failure_question(text: &str) -> bool {
     let text = normalized(text);

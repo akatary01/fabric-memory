@@ -16,15 +16,21 @@ pub fn save(folder:&str,cloud:bool,enabled:Option<bool>)->Result<Value,String>{
     fabric_core::write_json(&path(),&json!({"path":folder,"enabled":enabled,"cloud_allowed":cloud,"cloud_provider":crate::cloud_settings::provider_id()})).map_err(|e|e.to_string())?;Ok(settings())
 }
 pub fn tools()->Vec<Value>{vec![
- json!({"name":"workspace","description":"Read applicable scoped project instructions, list, read, or write project files in the selected workspace. Inspect existing files before editing. Tool paths are relative: use action=list and path='.' to list the selected folder. Write complete file contents. File edits require review.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","write","instructions"]},"path":{"type":"string","description":"Relative path inside the selected workspace. Use . for its root."},"content":{"type":"string"}},"required":["action","path"]}}),
- json!({"name":"run_code","description":"Run a shell command in the selected workspace using Fabric's sandbox. Use this to execute Python/code, run project tests, inspect failures, and verify changes. python3 and Git are included; other runtimes must be installed. No network by default. Commands require review; output and exit status are returned. Use relative path for working directory. Commands default to 60 seconds. Set timeout_seconds for a longer build or test, up to 600 seconds within the task budget. Background processes stop with the action.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"path":{"type":"string"},"timeout_seconds":{"type":"integer"},"network":{"type":"boolean"}},"required":["command"]}}),
+ json!({"name":"workspace","description":"Read applicable scoped project instructions, list, read, or write project files in the selected workspace. Inspect existing files before editing. Use action=list and path='.' to list the selected folder. An absolute path outside it requests folder access for this task. Write complete file contents. File edits require review.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","write","instructions"]},"path":{"type":"string","description":"Relative path inside the selected workspace. Use . for its root."},"content":{"type":"string"}},"required":["action","path"]}}),
+ json!({"name":"run_code","description":"Run a shell command in the selected workspace using Fabric's sandbox. Use this to execute Python/code, run project tests, inspect failures, and verify changes. python3 and Git are included; other runtimes must be installed. No network by default. Commands require review; output and exit status are returned. Set path to the working directory. An external absolute path requests folder access for this task. Commands default to 60 seconds. Set timeout_seconds for a longer build or test, up to 600 seconds within the task budget. Background processes stop with the action.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"path":{"type":"string"},"timeout_seconds":{"type":"integer"},"network":{"type":"boolean"}},"required":["command"]}}),
  json!({"name":"saved_tool","description":"List or run reusable Python helpers in this workspace. List existing helpers before reuse. When the user asks to create a helper, use workspace.write at fabric-tools/<name>.py, give it a --help option, and verify it on representative inputs. Read an unfamiliar helper before running it. Helpers persist across conversations in this workspace. Runs are reviewed, sandboxed, and offline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","run"]},"name":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"path":{"type":"string","description":"Working directory relative to workspace root, defaults to ."},"timeout_seconds":{"type":"integer"}},"required":["action"]}})
 ]}
-#[derive(Default)]pub struct Host{pid:AtomicU32}
+#[derive(Default)]
+pub struct Host {
+    pid: AtomicU32,
+    folders: std::sync::Mutex<Vec<(PathBuf, bool)>>,
+}
 impl Drop for Host{fn drop(&mut self){self.stop();}}
 impl Host{
  pub fn stop(&self){let pid=self.pid.swap(0,Ordering::Relaxed);if pid!=0 {let _=Command::new("/bin/kill").args(["-TERM",&pid.to_string()]).status();}}
- pub fn call(&self,name:&str,args:&Value,remaining:std::time::Duration)->Result<Value,String>{
+ pub fn call(&self,name:&str,args:&Value,remaining: impl Fn() -> Result<std::time::Duration, String>,
+    approve: impl Fn(&Path) -> Result<bool, String>,
+ )->Result<Value,String>{
     if name == "workspace" && !matches!(args["action"].as_str(), Some("list" | "read" | "write" | "instructions")) {
         return Err("Choose list, read, write, or instructions for workspace files".into());
     }
@@ -36,10 +42,41 @@ impl Host{
             _ => return Err("Choose list or run for saved tools".into()),
         });
     }
-    let settings=settings();if settings["enabled"]!=true{return Err("Workspace access is off. Enable it in Settings → Access & local models.".into());}let root=settings["path"].as_str().ok_or("Missing workspace")?;
-    std::fs::create_dir_all(root).map_err(|e|e.to_string())?;
-    args["path"]=json!(relative_path(Path::new(root),args["path"].as_str().unwrap_or("."))?);
-    if args["action"]=="instructions"{return instructions(Path::new(root),args["path"].as_str().unwrap_or("."));}
+    let settings = settings();
+    if settings["enabled"] != true {
+        return Err("Workspace access is off. Enable it in Settings → Access & local models.".into());
+    }
+    let configured = PathBuf::from(settings["path"].as_str().ok_or("Missing workspace")?);
+    std::fs::create_dir_all(&configured).map_err(|e| e.to_string())?;
+    let configured = configured.canonicalize().map_err(|e| e.to_string())?;
+    let input = args["path"].as_str().unwrap_or(".");
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let expanded = match (input.strip_prefix("~/"), home.as_ref()) {
+        (Some(suffix), Some(home)) => home.join(suffix),
+        _ => PathBuf::from(input),
+    };
+    let mut root = configured;
+    let mut target = expanded;
+    let external = target.is_absolute() && !target.starts_with(&root);
+    if external {
+        let (canonical, folder) = external_target(&target, args["action"].as_str().unwrap_or(""))?;
+        let cached = self.folders.lock().map_err(|_| "Folder approvals unavailable")?
+            .iter().rev().find(|(path, _)| canonical.starts_with(path)).cloned();
+        match cached {
+            Some((_, false)) => return Err("The user declined access to this folder. Do not retry it.".into()),
+            Some((approved, true)) => root = approved,
+            None => {
+                let granted = approve(&folder)?;
+                self.folders.lock().map_err(|_| "Folder approvals unavailable")?.push((folder.clone(), granted));
+                if !granted { return Err("The user declined access to this folder. Do not retry it.".into()); }
+                root = folder;
+            }
+        }
+        target = canonical;
+    }
+    args["path"] = json!(relative_path(&root, target.to_str().ok_or("Invalid workspace path")?)?);
+    let remaining = remaining()?;
+    if args["action"]=="instructions"{return instructions(&root,args["path"].as_str().unwrap_or("."));}
     let timeout = args["timeout_seconds"].as_u64().unwrap_or(60).clamp(1, 600);
     let timeout = if matches!(args["action"].as_str(), Some("run" | "run_tool")) { timeout } else { timeout.min(120) };
     let timeout = timeout.min(remaining.as_secs().max(1));
@@ -56,11 +93,36 @@ impl Host{
     let line=match rx.recv_timeout(host_timeout){Ok(Ok(line))=>line,_=>{self.stop();drop(input);let _=child.wait();return Err("Code execution stopped or timed out".into());}};
     drop(input);let _=child.wait();self.pid.store(0,Ordering::Relaxed);
     let result:Value=serde_json::from_str(&line).map_err(|_|"Workspace action stopped")?;
-    if let Some(error)=result["error"].as_str(){return Err(error.into());}Ok(result["result"].clone())
+    if let Some(error)=result["error"].as_str(){return Err(error.into());}
+    let mut result = result["result"].clone();
+    if external && result.is_object() { result["workspace_root"] = json!(root); }
+    Ok(result)
  }
 }
 
-fn relative_path(root:&Path,input:&str)->Result<String,String>{let path=Path::new(input);let relative=if path.is_absolute(){path.strip_prefix(root).map_err(|_|"Path is outside the selected workspace. Use relative paths, such as '.' to list this workspace, or change the working folder in Settings → General.")?}else{path};Ok(if relative.as_os_str().is_empty(){".".into()}else{relative.to_str().ok_or("Invalid workspace path")?.into()})}
+fn external_target(path: &Path, action: &str) -> Result<(PathBuf, PathBuf), String> {
+    let canonical = match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) if action == "write" => {
+            let name = path.file_name().ok_or("Choose a file in an existing folder.")?;
+            path.parent().ok_or("Choose a file in an existing folder.")?
+                .canonicalize().map_err(|_| "Choose a file in an existing folder.")?.join(name)
+        }
+        Err(_) => return Err("The external path could not be opened. Check its absolute path and macOS file access.".into()),
+    };
+    let folder = if canonical.is_dir() {
+        canonical.clone()
+    } else {
+        canonical.parent().ok_or("Choose a specific folder.")?.to_path_buf()
+    };
+    let home = std::env::var_os("HOME").and_then(|value| PathBuf::from(value).canonicalize().ok());
+    if folder == Path::new("/") || home.is_some_and(|home| home.starts_with(&folder)) {
+        return Err("Choose a specific project folder inside your home directory.".into());
+    }
+    Ok((canonical, folder))
+}
+
+fn relative_path(root:&Path,input:&str)->Result<String,String>{let path=Path::new(input);let relative=if path.is_absolute(){path.strip_prefix(root).map_err(|_|"Path is outside the selected workspace. Use relative paths, such as '.' to list this workspace, or use an absolute path to request temporary folder access.")?}else{path};Ok(if relative.as_os_str().is_empty(){".".into()}else{relative.to_str().ok_or("Invalid workspace path")?.into()})}
 #[cfg(test)]mod path_tests{use super::*;#[test]fn selected_absolute_paths_normalize_without_expanding_workspace_access(){let root=Path::new("/projects/app");assert_eq!(relative_path(root,"/projects/app").unwrap(),".");assert_eq!(relative_path(root,"/projects/app/src/main.py").unwrap(),"src/main.py");assert_eq!(relative_path(root,".").unwrap(),".");assert!(relative_path(root,"/projects/app-other").is_err());assert!(relative_path(root,"/etc").is_err());}}
 
 pub fn project_context()->Result<String,String>{let state=settings();if state["enabled"]!=true{return Ok(String::new());}Ok(instructions(Path::new(state["path"].as_str().ok_or("Missing workspace")?),".")?["text"].as_str().unwrap_or("").into())}

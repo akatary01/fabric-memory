@@ -850,6 +850,8 @@ async function pollTask(){
   const question = state.pending?.kind === 'question';
   $('prompt').placeholder = question ? 'Reply to the agent’s question…' : 'Ask, remember, or continue…';
   $('task-review').hidden = !state.pending || question;
+  const folderAccess = state.pending?.tool === 'workspace_access';
+  $('approve-action').textContent = folderAccess ? 'Allow folder for this task' : 'Allow action';
   if (state.pending && !question) {$('review-summary').textContent=state.pending.tool;$('review-arguments').textContent=JSON.stringify(state.pending.arguments,null,2);}
 }
 $('approve-action').addEventListener('click',()=>reviewAction(true));$('deny-action').addEventListener('click',()=>reviewAction(false));
