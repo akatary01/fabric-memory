@@ -10,6 +10,7 @@ import math
 import os
 import re
 import ssl
+import time
 import socket
 import struct
 import subprocess
@@ -271,9 +272,43 @@ class Handler(BaseHTTPRequestHandler):
                 value=json.loads(raw)
                 return self.reply(200,enrollment.join(value.get("invitation"),value.get("device_name")))
             if path=="/v1/invitations" and self.command=="POST" and enrollment:return self.reply(200,enrollment.invite())
-            if path=="/v1/devices" and self.command=="GET" and enrollment:return self.reply(200,{"devices":[{"id":d["id"],"name":d["name"]} for d in enrollment.devices() if not d["revoked"]]})
-            if path=="/v1/revoke" and self.command=="POST" and admin and enrollment:
-                enrollment.revoke(json.loads(raw)["device_id"]);return self.reply(200,{"revoked":True})
+            if path == "/v1/device-usage" and self.command == "POST" and enrollment:
+                identity = device or ("beacon-owner" if admin else None)
+                if not identity:
+                    return self.reply(403, {"error": "Device usage requires a paired device credential"})
+                sample = json.loads(raw)
+                fields = {"cpu_percent", "memory_total", "memory_used", "disk_total", "disk_used"}
+                if not isinstance(sample, dict) or not sample or set(sample) - fields:
+                    raise ValueError("Invalid device usage fields")
+                for key, value in sample.items():
+                    if key == "cpu_percent":
+                        if type(value) not in (int, float) or not 0 <= value <= 100:
+                            raise ValueError("Invalid CPU usage")
+                    elif type(value) is not int or not 0 <= value < 2**60:
+                        raise ValueError("Invalid byte count")
+                for resource in ("memory", "disk"):
+                    used, total = resource + "_used", resource + "_total"
+                    if (used in sample) != (total in sample) or sample.get(used, 0) > sample.get(total, 0):
+                        raise ValueError("Invalid device capacity")
+                with LOCK:
+                    if not hasattr(self.server, "device_usage"):
+                        self.server.device_usage = {}
+                    self.server.device_usage[identity] = {**sample, "sampled_at": int(time.time())}
+                return self.reply(200, {"received": True})
+            if path == "/v1/devices" and self.command == "GET" and enrollment:
+                devices = [d for d in enrollment.devices() if not d["revoked"]]
+                with LOCK:
+                    usage = getattr(self.server, "device_usage", {})
+                    directory = [{"id": d["id"], "name": d["name"], "usage": usage.get(d["id"])} for d in devices]
+                    if "beacon-owner" in usage:
+                        directory.append({"id": "beacon-owner", "name": "Beacon Mac", "usage": usage["beacon-owner"]})
+                return self.reply(200, {"devices": directory})
+            if path == "/v1/revoke" and self.command == "POST" and admin and enrollment:
+                revoked = json.loads(raw)["device_id"]
+                enrollment.revoke(revoked)
+                with LOCK:
+                    getattr(self.server, "device_usage", {}).pop(revoked, None)
+                return self.reply(200, {"revoked": True})
             if path.startswith("/fabric.git/"):
                 if not admin:return self.reply(403,{"error":"Device sync uses scoped event endpoints. Raw Git is owner-only."})
                 if ".." in path.split("/"):raise ValueError("Invalid Git path")

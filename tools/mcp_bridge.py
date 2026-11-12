@@ -7,12 +7,13 @@ LIMIT=8*1024*1024
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args):return None
 class Session:
-    def __init__(self,name,config):
-        self.name=name;self.config=config;self.counter=0;self.version=None;self.session=None;self.process=None;self.pending_id=None
+    def __init__(self,name,config,timeout=120):
+        self.timeout=timeout;self.name=name;self.config=config;self.counter=0;self.version=None;self.session=None;self.process=None;self.pending_id=None
         if config.get('command'):
             allowed=('PATH','HOME','USER','LOGNAME','LANG','LC_ALL','TMPDIR','SHELL')
-            env={k:v for k,v in os.environ.items() if k in allowed};env.update(config.get('env',{}))
-            self.process=subprocess.Popen([config['command'],*config.get('args',[])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=env,cwd=config.get('cwd') or None,start_new_session=True)
+            env={k:v for k,v in os.environ.items() if k in allowed};extra=[str(Path.home()/'.local/bin'),'/opt/homebrew/bin','/usr/local/bin'];env['PATH']=os.pathsep.join(dict.fromkeys([*env.get('PATH','/usr/bin:/bin').split(os.pathsep),*extra]));env.update(config.get('env',{}))
+            try:self.process=subprocess.Popen([config['command'],*config.get('args',[])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=env,cwd=config.get('cwd') or None,start_new_session=True)
+            except FileNotFoundError:raise ValueError('Command not found: '+config['command']+'. Install its runtime or use the executable’s full path.') from None
             self.messages=queue.Queue()
             threading.Thread(target=self.read,daemon=True).start()
         else:
@@ -46,7 +47,7 @@ class Session:
             self.send(message)
             if notification:return None
             while True:
-                try:response=self.messages.get(timeout=120)
+                try:response=self.messages.get(timeout=self.timeout)
                 except queue.Empty:
                     self.send({'jsonrpc':'2.0','method':'notifications/cancelled','params':{'requestId':message['id'],'reason':'Timed out'}});raise ValueError('MCP request timed out')
                 if isinstance(response,Exception):raise response
@@ -59,7 +60,7 @@ class Session:
             if self.session:headers['Mcp-Session-Id']=self.session
             if self.version:headers['MCP-Protocol-Version']=self.version
             request=urllib.request.Request(self.config['url'],data=json.dumps(message).encode(),headers=headers,method='POST')
-            try:raw=self.opener.open(request,timeout=120)
+            try:raw=self.opener.open(request,timeout=self.timeout)
             except urllib.error.HTTPError as e:
                 if e.code in (401,403):raise ValueError('MCP authentication failed. Configure the server’s authorization header.')
                 raise ValueError('MCP server returned HTTP '+str(e.code))
@@ -121,7 +122,8 @@ class Session:
 class Host:
     def __init__(self,path):self.path=Path(path);self.sessions={}
     def config(self):return json.loads(self.path.read_text()) if self.path.exists() else {'mcpServers':{}}
-    def save(self,value):
+    @staticmethod
+    def validate(value):
         if not isinstance(value,dict) or set(value)!={'mcpServers'} or not isinstance(value['mcpServers'],dict):raise ValueError('Use {"mcpServers": {"name": {"command": ..., "args": [...]}}}')
         for name,c in value['mcpServers'].items():
             if not name or not isinstance(c,dict) or not (bool(c.get('command')) ^ bool(c.get('url'))):raise ValueError('Each MCP server needs a command or URL')
@@ -130,6 +132,8 @@ class Host:
             if not isinstance(c.get('headers',{}),dict) or any(not isinstance(v,str) for v in c.get('headers',{}).values()):raise ValueError('Headers must be strings')
             if c.get('cwd') and (not Path(c['cwd']).is_absolute() or not Path(c['cwd']).is_dir()):raise ValueError('Working directory must be an existing absolute path')
             if not isinstance(c.get('roots',[]),list) or any(not isinstance(r,str) or not Path(r).is_absolute() for r in c.get('roots',[])):raise ValueError('Roots must be absolute paths')
+    def save(self,value):
+        self.validate(value)
         self.close();self.path.parent.mkdir(parents=True,exist_ok=True);temporary=self.path.with_suffix('.next');temporary.write_text(json.dumps(value,indent=2));temporary.chmod(0o600);temporary.replace(self.path)
     def session(self,name):
         config=self.config()['mcpServers'].get(name)
@@ -148,6 +152,11 @@ class Host:
             results.append(item)
         return results
     def command(self,command,args):
+        if command=='test':
+            self.validate({'mcpServers':{'connection-test':args['server']}})
+            session=Session('connection-test',args['server'],timeout=12)
+            try:return {'connected':True,'server':session.info,'tools':len(session.listing('tools')),'resources':len(session.listing('resources')),'prompts':len(session.listing('prompts'))}
+            finally:session.close()
         if command=='save':self.save(args['config']);return {'saved':True}
         if command=='config':return self.config()
         if command=='catalog':return self.catalog()

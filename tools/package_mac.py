@@ -28,9 +28,14 @@ def extract(archive,folder):
 
 def seed_models(source,destination,notices):
     # Allowlist exactly the default model and its content-addressed dependencies.
-    relative=Path('manifests/registry.ollama.ai/library/lfm3/1.7b-q4_K_M')
-    manifest=source/relative
-    if not manifest.exists():raise ValueError('Prepare the default model with fabric-memory run first.')
+    relative=Path('manifests/registry.ollama.ai/library/lfm3-vl/latest')
+    # The latest tag may resolve to an Apple Silicon-only MLX variant.
+    # Use the official GGUF variant for the universal installer.
+    manifest=source/relative.with_name('2b-q4_K_M')
+    if not manifest.exists():
+        manifest=source/relative
+        if not manifest.exists() or not any(layer.get('mediaType')=='application/vnd.ollama.image.model' for layer in json.loads(manifest.read_text()).get('layers',[])):
+            raise ValueError('Prepare the portable model with FABRIC_LOCAL_MODEL=lfm3-vl:2b-q4_K_M fabric-memory run --rebuild.')
     (destination/relative).parent.mkdir(parents=True,exist_ok=True)
     shutil.copy2(manifest,destination/relative)
     (destination/'blobs').mkdir(parents=True)
@@ -155,7 +160,7 @@ def package(root,output,identity=None,notary_profile=None):
               'NSAppleEventsUsageDescription':'Control the Mac apps you choose for agent tasks.'}
         (contents/'Info.plist').write_bytes(plistlib.dumps(info))
         (resources/'standalone.json').write_text(json.dumps({'version':'0.2.0','architectures':list(TARGETS),
-            'source_fingerprint':source_fingerprint,'git':git_version,'python':PYTHON_VERSION,'ollama':'0.40.15','searxng':SEARCH_REVISION,'default_model':'lfm3:1.7b-q4_K_M'}))
+            'source_fingerprint':source_fingerprint,'git':git_version,'python':PYTHON_VERSION,'ollama':'0.40.15','searxng':SEARCH_REVISION,'default_model':'lfm3-vl:latest'}))
         metadata=json.loads(subprocess.check_output(['cargo','metadata','--format-version','1','--locked'],cwd=root))
         for dependency in metadata['packages']:
             folder=Path(dependency['manifest_path']).parent

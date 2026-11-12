@@ -46,6 +46,12 @@ class MCPTests(unittest.TestCase):
   try:
    s=Session('fixture',{'url':f'http://127.0.0.1:{server.server_port}/mcp'});self.assertEqual(s.listing('tools'),[]);self.assertEqual(seen[-1],('tools/list','fixture-session','2025-11-25'))
   finally:server.shutdown();server.server_close();thread.join()
+ def test_connection_test_does_not_modify_saved_config_or_live_sessions(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);script=root/'server.py';script.write_text(FIXTURE);h=Host(root/'mcp.json');config={'command':sys.executable,'args':['-u',str(script)]}
+   try:
+    h.save({'mcpServers':{'kept':config}});existing=h.session('kept');before=(root/'mcp.json').read_bytes();result=h.command('test',{'server':config});self.assertTrue(result['connected']);self.assertEqual(result['tools'],1);self.assertEqual((root/'mcp.json').read_bytes(),before);self.assertIs(h.session('kept'),existing)
+   finally:h.close()
  def test_remote_http_and_redirects_are_not_silently_trusted(self):
   with self.assertRaises(ValueError):Session('bad',{'url':'http://example.com/mcp'})
   with tempfile.TemporaryDirectory() as d:

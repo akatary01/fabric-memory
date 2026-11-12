@@ -15,7 +15,7 @@ pub fn catalog(refresh:bool)->Result<Value,String>{
  if !refresh {if let Some(v)=cached.as_ref(){if now.saturating_sub(v["fetched_at"].as_u64().unwrap_or(0))<86400 {return Ok(v.clone());}}}
  let token=crate::cloud_settings::token().ok_or("Add a cloud API token first")?;
  let result=(|| {
-  let response=reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(20)).redirect(reqwest::redirect::Policy::none()).build().map_err(|e|e.to_string())?.get(endpoint).bearer_auth(token).send().map_err(|_|"Could not discover provider models")?;
+  let response=reqwest::blocking::Client::builder().timeout(crate::agent::bounded_timeout(20)?).redirect(reqwest::redirect::Policy::none()).build().map_err(|e|e.to_string())?.get(endpoint).bearer_auth(token).send().map_err(|_|"Could not discover provider models")?;
   if !response.status().is_success(){return Err(format!("Model discovery returned HTTP {}",response.status().as_u16()));}
   use std::io::Read;let mut bytes=Vec::new();response.take(1048577).read_to_end(&mut bytes).map_err(|e|e.to_string())?;if bytes.len()>1048576{return Err("Model catalog exceeds limit".into());}
   let value:Value=serde_json::from_slice(&bytes).map_err(|_|"Invalid provider model catalog")?;

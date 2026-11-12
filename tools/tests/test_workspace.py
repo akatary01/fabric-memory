@@ -40,3 +40,50 @@ class WorkspaceTests(unittest.TestCase):
    self.assertTrue((root/'child.pid').exists());pid=int((root/'child.pid').read_text());worker.terminate();worker.wait(timeout=5)
    worker.stdin.close();worker.stdout.close();worker.stderr.close()
    with self.assertRaises(ProcessLookupError):os.kill(pid,0)
+
+@unittest.skipUnless(sys.platform=='darwin' and Path('/Applications/Blender.app').is_dir(),'installed Blender on macOS')
+class BlenderTests(unittest.TestCase):
+ def test_dent_changes_saved_sphere_geometry(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder)
+   original=module.execute(root,{'action':'blender','operation':'create','operations':[{'op':'add_object','primitive':'sphere','name':'Sphere'}],'output_file':'source.blend'})
+   self.assertTrue(original['verified'],original)
+   source=(root/'source.blend').read_bytes()
+   result=module.execute(root,{'action':'blender','operation':'edit','input_file':'source.blend','operations':[{'op':'dent','name':'sphere'}],'output_file':'dented.blend'})
+   self.assertTrue(result['verified'],result)
+   self.assertEqual((root/'source.blend').read_bytes(),source)
+   verify=module.execute(root,{'action':'blender','operation':'edit','input_file':'dented.blend','code':"mesh = bpy.data.objects['Sphere'].data\nassert max(v.co.z for v in mesh.vertices) < 0.95\nassert min(v.co.z for v in mesh.vertices) < -0.99"})
+   self.assertEqual(verify['exit_code'],0,verify)
+
+ def test_create_reopen_modify_and_sandbox(self):
+  with tempfile.TemporaryDirectory() as folder,tempfile.TemporaryDirectory() as outside:
+   root=Path(folder)
+   first=module.execute(root,{'action':'blender','operation':'create','input_file':'fabricTest.blend','operations':[{'op':'remove_object','name':'cube'}],'code':"return {'ok':True}",'output_file':'fabricTest.blend'})
+   self.assertEqual(first['exit_code'],0,first);self.assertTrue(first['verified']);self.assertEqual({o['name'] for o in first['objects']},{'Camera','Light'})
+   with self.assertRaises(ValueError):module.execute(root,{'action':'blender','code':'','output_file':'fabricTest.blend'})
+   second=module.execute(root,{'action':'blender','input_file':'fabricTest.blend','operations':[{'op':'add_object','primitive':'sphere','name':'FabricSphere','location':[1,2,3]}],'output_file':'modified.blend'})
+   self.assertTrue(second['verified']);self.assertIn('FabricSphere',[o['name'] for o in second['objects']]);self.assertNotIn('Cube',[o['name'] for o in second['objects']]);self.assertEqual(next(o for o in second['objects'] if o['name']=='FabricSphere')['location'],[1,2,3])
+   secret=Path(outside)/'secret';secret.write_text('private fixture')
+   denied=module.execute(root,{'action':'blender','code':f"open({str(secret)!r}).read()"});self.assertNotEqual(denied['exit_code'],0);self.assertNotIn('private fixture',denied['stdout'])
+   failure=module.execute(root,{'action':'blender','code':"raise RuntimeError('fixture failure')",'output_file':'failure.blend'});self.assertNotEqual(failure['exit_code'],0);self.assertFalse((root/'failure.blend').exists())
+   with self.assertRaises(ValueError):module.execute(root,{'action':'blender','operation':'edit','code':''})
+   for field in ('input_file','output_file'):
+    with self.assertRaises(ValueError):module.execute(root,{'action':'blender','code':'',field:'../escape.blend'})
+
+class BlenderValidationTests(unittest.TestCase):
+ def test_inspection_cannot_silently_accept_edit_fields(self):
+  for op in [{'op':'inspect','primitive':'cube'}, {'op':'inspect','scale':[1,1,1]}, {'op':'remove_object'}, {'op':'transform_object','name':'Cube'}, {'op':'python','code':''}]:
+   with self.assertRaises(ValueError):module.validate_blender_operations([op])
+  module.validate_blender_operations([{'op':'remove_object','name':'Cube'}])
+
+@unittest.skipUnless(sys.platform=='darwin' and Path('/Applications/Blender.app').is_dir(),'installed Blender on macOS')
+class BlenderReadOnlyTests(unittest.TestCase):
+ def test_inspect_cannot_save_or_reset_the_partial_file(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);module.execute(root,{'action':'blender','operation':'create','operations':[{'op':'remove_object','name':'Cube'}],'output_file':'partial.blend'})
+   original=(root/'partial.blend').read_bytes()
+   with self.assertRaises(ValueError):module.execute(root,{'action':'blender','operation':'inspect','input_file':'partial.blend','output_file':'partial.blend','overwrite':True})
+   with self.assertRaises(ValueError):module.execute(root,{'action':'blender','operation':'edit','input_file':'partial.blend','operations':[{'op':'inspect','primitive':'cube'}],'output_file':'partial.blend','overwrite':True})
+   self.assertEqual((root/'partial.blend').read_bytes(),original)
+   result=module.execute(root,{'action':'blender','operation':'inspect','input_file':'partial.blend'});self.assertNotIn('saved_file',result);self.assertNotIn('Cube',[o['name'] for o in result['objects']]);self.assertEqual((root/'partial.blend').read_bytes(),original)
+   scripted=module.execute(root,{'action':'blender','operation':'edit','input_file':'partial.blend','operations':[{'op':'python','code':"bpy.ops.mesh.primitive_uv_sphere_add()\nreturn {'ok': True}"}],'output_file':'scripted.blend'});self.assertTrue(scripted['verified']);self.assertIn('Sphere',[o['name'] for o in scripted['objects']])

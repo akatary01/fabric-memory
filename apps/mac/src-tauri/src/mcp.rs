@@ -71,12 +71,13 @@ impl Host {
             });
         }
         let worker = holder.as_mut().unwrap();
+        let timeout = crate::agent::bounded_timeout(130)?;
         writeln!(worker.input, "{}", json!({"command":command,"args":args}))
             .map_err(|_| "MCP host disconnected")?;
         worker.input.flush().map_err(|e| e.to_string())?;
         let line = match worker
             .output
-            .recv_timeout(std::time::Duration::from_secs(130))
+            .recv_timeout(timeout)
         {
             Ok(v) => v,
             Err(_) => {

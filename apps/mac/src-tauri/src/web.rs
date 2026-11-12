@@ -83,7 +83,7 @@ fn http(url: &Url) -> Result<Client, String> {
         .resolve_to_addrs(url.host_str().unwrap().trim_matches(['[', ']']), &addresses)
         .user_agent("MemoryFabric/0.1 (read-only web retrieval)")
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(15))
+        .timeout(crate::agent::bounded_timeout(15)?)
         .build()
         .map_err(|_| "Cannot initialize web reader".into())
 }
@@ -156,6 +156,30 @@ fn page(html: &str) -> (String, String) {
             .collect(),
     )
 }
+fn aggregate_rating(html: &str) -> Option<Value> {
+    fn find(value: &Value) -> Option<Value> {
+        if let Some(items) = value.as_array() { return items.iter().find_map(find); }
+        let aggregate = &value["aggregateRating"];
+        let number = |field: &Value| field.as_f64().or_else(|| field.as_str()?.parse().ok());
+        if let Some(rating) = number(&aggregate["ratingValue"]) {
+            let best = number(&aggregate["bestRating"]).unwrap_or(5.0);
+            if best.is_finite() && best > 0.0 && rating >= 0.0 && rating <= best {
+                return Some(json!({"out_of_five":rating * 5.0 / best,"value":rating,"scale":best}));
+            }
+        }
+        find_graph(value)
+    }
+    fn find_graph(value: &Value) -> Option<Value> {
+        value.get("@graph").and_then(find)
+    }
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("script[type='application/ld+json']").ok()?;
+    document.select(&selector).find_map(|node| {
+        let value: Value = serde_json::from_str(&node.inner_html()).ok()?;
+        find(&value)
+    })
+}
+
 pub fn fetch(address: &str) -> Result<Value, String> {
     let mut url = Url::parse(address).map_err(|_| "Invalid web URL")?;
     for _ in 0..4 {
@@ -199,7 +223,12 @@ pub fn fetch(address: &str) -> Result<Value, String> {
         if text.trim().is_empty() {
             return Err("Web page contains no readable text".into());
         }
-        return Ok(json!({"title":title,"url":url.as_str(),"content":text,"kind":"page"}));
+        let rating = if kind.contains("html") { aggregate_rating(&raw) } else { None };
+        let content = match &rating {
+            Some(rating) => format!("{text}\nPublished aggregate rating: {} out of {}.", rating["value"], rating["scale"]),
+            None => text,
+        };
+        return Ok(json!({"title":title,"url":url.as_str(),"content":content,"kind":"page","rating":rating}));
     }
     Err("Web page exceeded redirect limit".into())
 }
@@ -238,6 +267,14 @@ fn relevant(query:&str,title:&str,snippet:&str)->bool {
     terms.iter().filter(|term|evidence.contains(**term)).count()>=2
 }
 pub fn gather(question: &str) -> Result<Vec<Value>, String> {
+    search(question, false)
+}
+
+pub fn gather_pages(question: &str) -> Result<Vec<Value>, String> {
+    search(question, true)
+}
+
+fn search(question: &str, pages_only: bool) -> Result<Vec<Value>, String> {
     let direct = urls(question);
     if !direct.is_empty() {
         return direct.iter().map(|url| fetch(url)).collect();
@@ -253,7 +290,7 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     let client = if local {
         Client::builder()
             .no_proxy()
-            .timeout(Duration::from_secs(25))
+            .timeout(crate::agent::bounded_timeout(25)?)
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Cannot initialize search")?
@@ -278,9 +315,10 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     }
     let value: Value =
         serde_json::from_str(&body(response)?).map_err(|_| "Search service did not return JSON")?;
+    let results = value["results"].as_array().ok_or("Search service did not return a results list")?;
     let mut sources = Vec::new();
     let mut fetched = 0;
-    for result in value["results"].as_array().into_iter().flatten().take(6) {
+    for result in results.iter().take(6) {
         let Some(address) = result["url"].as_str() else {
             continue;
         };
@@ -293,7 +331,7 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
         }
         let snippet = plain(result["content"].as_str().unwrap_or(""), 1500);
         if !relevant(&query,result["title"].as_str().unwrap_or(""),&snippet){continue;}
-        if fetched < 2 {
+        if fetched < if pages_only { 6 } else { 2 } {
             fetched += 1;
             if let Ok(page) = fetch(url.as_str()) {
                 sources.push(page);
@@ -303,18 +341,12 @@ pub fn gather(question: &str) -> Result<Vec<Value>, String> {
                 continue;
             }
         }
-        if !snippet.is_empty() {
+        if !pages_only && !snippet.is_empty() {
             sources.push(json!({"title":plain(result["title"].as_str().unwrap_or("Web result"),240),"url":url.as_str(),"content":snippet,"kind":"search snippet"}));
         }
         if sources.len() == 3 {
             break;
         }
-    }
-    if sources.is_empty() {
-        return Err(
-            "No relevant, readable web sources were found for this query. Try a more precise query or use Auto with cloud enabled for broader research."
-                .into(),
-        );
     }
     Ok(sources)
 }
@@ -406,4 +438,19 @@ mod tests {
 #[cfg(test)]
 mod relevance_tests {use super::*;
 #[test]fn ignores_unrelated_single_word_hits(){assert!(!relevant("chanel brown leather bag","Brown University","University news"));assert!(!relevant("International Mathematical Olympiad 2025 problem 6","International Trucks","Heavy trucks"));assert!(relevant("chanel brown leather bag","Chanel brown leather flap bag","Handbag listing"));}
+}
+
+
+#[cfg(test)]
+mod rating_evidence_tests {
+    use super::*;
+    #[test]
+    fn extracts_a_published_rating_and_ignores_page_prose() {
+        assert!(aggregate_rating("<p>Rating: 4.9 out of 5</p>").is_none());
+        let html = r#"<script type="application/ld+json">
+          {"@graph":[{"@type":"Recipe","aggregateRating":{"ratingValue":"9.2","bestRating":10}}]}
+          </script>"#;
+        let rating = aggregate_rating(html).unwrap();
+        assert!((rating["out_of_five"].as_f64().unwrap() - 4.6).abs() < 1e-8);
+    }
 }

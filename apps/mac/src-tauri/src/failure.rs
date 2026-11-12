@@ -4,8 +4,12 @@ pub fn report(error:&str,steps:&Value)->Value{
  let lower=error.to_lowercase();
  let (reason,help,settings,local)=if lower.contains("task stopped"){
  ("You stopped this task.","Tell me what you want to continue. I should check the current state before repeating any action.",false,false)
+ }else if lower.contains("task time budget expired") {
+ ("This task reached its time budget.","Completed changes are retained. Say “Try again” to continue from the current state, or change the time budget in Settings → General.",true,false)
  }else if lower.contains("no progress") {
- ("The agent repeated an action without making progress.","I stopped the repetition. The last error or unchanged result is below. Correct the path or working folder, give me the missing information, or choose another planning model; completed changes are retained.",true,false)
+ ("The agent repeated an action without making progress.",if lower.contains("blender"){"The local model repeated a Blender operation without completing the requested edit. This is a planning stall, not evidence that your file path or permissions are wrong. The saved partial file is retained; retry continues from it. Control stays local."}else{"I stopped the repetition. Check the last operation below and provide any missing details; completed changes are retained."},true,true)
+ }else if lower.contains("unavailable tool") || lower.contains("could not repair the tool call") {
+ ("The local planner could not produce a valid tool call.","Open Task activity to see what it tried. Say “Try again” to resume the original task.",false,false)
  }else if lower.contains("computer")||lower.contains("accessibility")||lower.contains("screen recording") {
  ("The requested computer action did not finish.","Check the detail below. You can open Connections to check Computer use and macOS access, tell me the browser or app name, or change the local model in Settings → General. Then I can continue from the last confirmed state.",false,false)
  }else if lower.contains("private") {

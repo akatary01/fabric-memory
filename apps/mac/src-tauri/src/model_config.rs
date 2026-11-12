@@ -160,3 +160,35 @@ pub fn supports_tools() -> bool {
     cache.lock().unwrap().insert(model, available);
     available
 }
+
+fn local_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(3)).build().map_err(|e| e.to_string())
+}
+
+pub fn installed() -> Result<Vec<String>, String> {
+    let tags: Value = local_client()?.get(crate::generation::endpoint("/api/tags")).send()
+        .and_then(|r|r.error_for_status()).and_then(|r|r.json()).map_err(|_|"The local model library is not ready. Retry once Fabric has started.")?;
+    let mut names = tags["models"].as_array().into_iter().flatten().filter_map(|m| m["name"].as_str())
+        .filter(|name|valid(name)).map(str::to_owned).collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn capabilities(model: &str) -> Result<Value, String> {
+    let result: Value = local_client()?.post(crate::generation::endpoint("/api/show")).json(&json!({"model":model})).send()
+        .and_then(|r|r.error_for_status()).and_then(|r|r.json()).map_err(|_|"Could not inspect that installed model.")?;
+    Ok(result["capabilities"].clone())
+}
+
+pub fn supports_vision() -> bool {
+    capabilities(&crate::generation::model()).is_ok_and(|c| c.as_array().is_some_and(|a| a.iter().any(|v|v=="vision")))
+}
+
+pub fn select_installed(model: &str) -> Result<(), String> {
+    if !installed()?.iter().any(|name|name==model) || !capabilities(model)?.as_array().is_some_and(|a| a.iter().any(|v|v=="completion")) {
+        return Err("Choose an installed chat model.".into());
+    }
+    fabric_core::write_json(&path(), &json!({"model":model})).map_err(|e|e.to_string())
+}

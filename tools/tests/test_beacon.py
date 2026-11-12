@@ -56,6 +56,23 @@ class BeaconTests(unittest.TestCase):
         private={**event,'id':str(uuid.uuid4()),'clock':3,'memory':'private-test','access':{'scope':'private','allowed_devices':[]}}
         self.assertEqual(self.request('/v1/events',{'events':[private]},owner['token'])[0],400)
         self.assertEqual(len(self.request('/v1/events?commit='+old,token=other['token'])[1]['events']),0)
+    def test_device_usage_is_bound_to_the_authenticated_device(self):
+        _, first = self.join()
+        _, second = self.join()
+        sample = {"cpu_percent": 35.5, "memory_used": 4, "memory_total": 8}
+        self.assertEqual(self.request('/v1/device-usage', sample)[0], 401)
+        self.assertEqual(self.request('/v1/device-usage', {**sample, "device_id": second["device_id"]}, first["token"])[0], 400)
+        self.assertEqual(self.request('/v1/device-usage', {**sample, "memory_used": 9}, first["token"])[0], 400)
+        self.assertEqual(self.request('/v1/device-usage', sample, first["token"])[0], 200)
+        status, result = self.request('/v1/devices', token=second["token"])
+        self.assertEqual(status, 200)
+        devices = {device["id"]: device for device in result["devices"]}
+        self.assertEqual(devices[first["device_id"]]["usage"]["cpu_percent"], 35.5)
+        self.assertIsNone(devices[second["device_id"]]["usage"])
+        self.assertEqual(self.request('/v1/revoke', {"device_id": first["device_id"]}, self.admin)[0], 200)
+        self.assertEqual(self.request('/v1/device-usage', sample, first["token"])[0], 401)
+        self.assertNotIn(first["device_id"], [d["id"] for d in self.request('/v1/devices', token=second["token"])[1]["devices"]])
+
     def test_prefix_and_git_transport(self):
         _,pairing=self.join();status,value=self.request('/v1/status',token=pairing['token']);self.assertEqual(status,200);self.assertEqual(value['service'],'memory-fabric')
         request=Request(self.base+'/fabric.git/info/refs?service=git-upload-pack',headers={'Authorization':'Bearer '+self.admin})

@@ -62,6 +62,16 @@ impl Client {
                 .into(),
         })
     }
+    pub fn publish_device_usage(&self, sample: &Value) {
+        if sample.as_object().is_some_and(|fields| !fields.is_empty()) {
+            let _ = self.http.post(format!("{}/v1/device-usage", self.base))
+                .bearer_auth(&self.token)
+                .timeout(std::time::Duration::from_secs(3))
+                .json(sample)
+                .send();
+        }
+    }
+
     fn response(response: reqwest::blocking::Response) -> Result<Value, String> {
         let ok = response.status().is_success();
         let value: Value = response

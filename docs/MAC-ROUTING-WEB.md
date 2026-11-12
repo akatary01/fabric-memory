@@ -7,12 +7,12 @@ The iPhone continues answering independently with its own model.
 ## Answer mode
 
 - **Local:** always generates on the Mac. A model error is reported without cloud fallback.
-- **Cloud:** always uses the configured OpenAI Responses model. Missing configuration is an error.
+- **Cloud:** uses the configured provider for answers and research. Device, Blender, workspace/code and MCP action planning always stay local; this overrides Cloud mode.
 - **Auto:** asks the local LFM3 model for a structured task classification. Simple
-  questions and memory recall prefer local; complex reasoning, coding, and analysis
-  prefer cloud. If classification fails, bounded keyword rules apply. Without cloud
-  configuration, Auto uses local. If local generation fails and cloud is configured,
-  Auto can use cloud. Each answer displays the actual provider, model, and routing reason.
+  and standard tasks stay local, including ordinary searches, writing and brief
+  summaries. Complex non-action reasoning can select cloud. If classification fails, bounded keyword rules apply. Without cloud
+  configuration, Auto uses local. Cloud fallback after a local generation error is
+  limited to complex/expert tasks. Search freshness alone never selects cloud. Each answer displays the actual provider, model, and routing reason.
 
 This is a capability heuristic, not a calibrated correctness or confidence detector.
 Use manual mode when you need a fixed provider.
@@ -20,7 +20,7 @@ Use manual mode when you need a fixed provider.
 For cloud, put `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1-mini`), and
 `FABRIC_CLOUD_ENABLED=true` in `apps/mac/.env`, then quit and reopen with
 `fabric-memory run`. The key stays in the Rust backend. Cloud receives the prompt,
-up to three selected memory passages, bounded recent conversation, and any
+up to two selected public memory passages, bounded recent conversation, and any
 retrieved web context. Requests set `store:false`; provider retention policies
 still apply. Auto can send this context to cloud when enabled.
 
@@ -73,3 +73,6 @@ response parsing, private-address rejection, URL extraction, and HTML script rem
 Live checks use the actual Mac LFM3 model, SearXNG, and public web pages. Tests
 and stress runs do not make paid cloud requests. See `reports/mac-routing-web.json`
 for the latest verification scope.
+
+Live web retrieval supplies current information without retraining the local model.
+The search integration and model can be updated independently.

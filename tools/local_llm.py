@@ -29,7 +29,7 @@ def ready():
 def main():
     os.umask(0o077);ROOT.mkdir(parents=True,exist_ok=True)
     lock=(ROOT/"setup.lock").open("a");fcntl.flock(lock,fcntl.LOCK_EX)
-    model=os.environ.get("FABRIC_LOCAL_MODEL","lfm3:1.7b-q4_K_M")
+    model=os.environ.get("FABRIC_LOCAL_MODEL","lfm3-vl:latest")
     settings=PROJECT/"apps/mac/.env"
     if settings.exists() and "FABRIC_LOCAL_MODEL" not in os.environ:
         for line in settings.read_text().splitlines():
@@ -66,7 +66,7 @@ def main():
             "ThrottleInterval":10,"WorkingDirectory":str(runtime),"StandardOutPath":str(ROOT/"service.log"),
             "StandardErrorPath":str(ROOT/"service-error.log"),"EnvironmentVariables":{
                 "PATH":"/usr/bin:/bin:/usr/sbin:/sbin","OLLAMA_HOST":"127.0.0.1:11434","OLLAMA_MODELS":str(ROOT/"models"),
-                "OLLAMA_NO_CLOUD":"1","OLLAMA_MAX_LOADED_MODELS":"1","OLLAMA_NUM_PARALLEL":"1","OLLAMA_CONTEXT_LENGTH":"4096"}}
+                "OLLAMA_NO_CLOUD":"1","OLLAMA_MAX_LOADED_MODELS":"2","OLLAMA_NUM_PARALLEL":"1","OLLAMA_CONTEXT_LENGTH":"4096"}}
         plist.write_bytes(plistlib.dumps(record));plist.chmod(0o600)
         domain="gui/"+str(os.getuid())
         if subprocess.run(["launchctl","print",domain+"/"+LABEL],capture_output=True).returncode!=0:

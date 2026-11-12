@@ -165,3 +165,25 @@ fn clear_all_memories_is_atomic_and_exceeds_page_limit() {
     drop(ledger);let ledger=Ledger::open(&path,&space(),3).unwrap();assert_eq!(ledger.status().unwrap().live_memories,0);
     let events=ledger.events().unwrap();assert!(events.iter().any(|e|e.deleted && e.access.scope=="private"));assert!(events.iter().any(|e|!e.deleted && e.text=="remembered"));
 }
+
+#[test]
+fn forget_removes_searchable_memory_once_and_preserves_visibility() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("forget.sqlite");
+    let mut ledger = Ledger::open(&path, &space(), 3).unwrap();
+    let query = Embedding { space: space(), values: vec![1., 0., 0.] };
+    let access = fabric_core::Access { scope: "private".into(), ..Default::default() };
+    ledger.put_with_access("one", "secret", Some(query.clone()), access.clone()).unwrap();
+    ledger.put("two", "keep", Some(query.clone())).unwrap();
+    assert!(ledger.forget("one").unwrap());
+    assert!(!ledger.forget("one").unwrap());
+    assert!(!ledger.forget("missing").unwrap());
+    assert_eq!(ledger.live_count().unwrap(), 1);
+    assert_eq!(ledger.search(&query, 5).unwrap()[0].memory, "two");
+    let events = ledger.events().unwrap();
+    assert_eq!(events.len(), 3);
+    let deletion = events.iter().find(|e| e.deleted).unwrap();
+    assert_eq!(deletion.access, access);
+    assert!(deletion.text.is_empty());
+    assert!(deletion.embedding.is_none());
+}

@@ -67,10 +67,13 @@ impl Store {
             .find(|c| c.id == self.active)
             .expect("validated active conversation")
     }
+    pub fn get(&self, id: &str) -> Result<&Conversation, String> {
+        self.conversations.iter().find(|chat| chat.id == id).ok_or("Conversation not found".into())
+    }
     pub fn list(&self) -> Value {
         let mut items = self.conversations.iter().collect::<Vec<_>>();
         items.sort_by_key(|c| std::cmp::Reverse(c.updated));
-        json!(items.into_iter().map(|c|json!({"id":c.id,"title":c.title,"messages":c.turns.len(),"active":c.id==self.active})).collect::<Vec<_>>())
+        json!(items.into_iter().map(|c|json!({"id":c.id,"title":c.title,"messages":c.turns.len(),"active":c.id==self.active,"elapsed_seconds":c.turns.iter().rev().find(|turn| turn["role"] == "assistant").and_then(|turn| turn["steps"].as_array()).and_then(|steps| steps.iter().rev().find_map(|step| step["elapsed_seconds"].as_u64()))})).collect::<Vec<_>>())
     }
     pub fn create(&mut self) {
         let id = format!("chat-{}-{}", now(), self.conversations.len());
@@ -90,12 +93,17 @@ impl Store {
         self.active = id.into();
         Ok(())
     }
+    #[cfg(test)]
     pub fn update(&mut self, turns: Vec<Value>) {
+        self.update_for(&self.active.clone(), turns).expect("validated active conversation");
+    }
+
+    pub fn update_for(&mut self, id: &str, turns: Vec<Value>) -> Result<(), String> {
         let chat = self
             .conversations
             .iter_mut()
-            .find(|c| c.id == self.active)
-            .expect("validated active conversation");
+            .find(|c| c.id == id)
+            .ok_or("Conversation not found")?;
         if !chat.renamed && chat.title == "New conversation" {
             if let Some(text) = turns
                 .iter()
@@ -113,6 +121,7 @@ impl Store {
         }
         chat.turns = turns;
         chat.updated = now();
+        Ok(())
     }
     pub fn rename(&mut self, id: &str, title: &str) -> Result<(), String> {
         let title = title.trim();
@@ -223,11 +232,19 @@ mod tests {
         s.create();
         s.update(vec![json!({"role":"user","content":"Second topic"})]);
         assert_eq!(s.active().title, "Second topic");
+        let second = s.active.clone();
+        let mut background = s.get(&first).unwrap().turns.clone();
+        background.push(json!({"role":"assistant","content":"Finished in the background","steps":[{"elapsed_seconds":42}]}));
+        s.update_for(&first, background).unwrap();
+        assert_eq!(s.active, second);
+        assert_eq!(s.active().turns.len(), 1);
+        assert!(s.list().as_array().unwrap().iter().any(|chat| chat["id"] == first && chat["elapsed_seconds"] == 42));
         s.save(&path).unwrap();
         let mut loaded = Store::load(&path, &old).unwrap();
         assert_eq!(loaded.active().turns[0]["content"], "Second topic");
         loaded.select(&first).unwrap();
         assert_eq!(loaded.active().turns[0]["content"], "First");
+        assert_eq!(loaded.active().turns[1]["content"], "Finished in the background");
         assert!(loaded.select("missing").is_err());
         assert_eq!(loaded.active, first);
     }

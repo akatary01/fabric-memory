@@ -66,13 +66,13 @@ Ask for a mockup or prototype. The Mac chat renders fenced `html` replies as an 
 
 Choose a project folder in **Settings → Coding workspace**; new projects default to the app's private Workspace folder. The agent can list/read/write files, run shell commands, inspect stdout/stderr and exit codes, fix errors, and run tests again. Fabric owns the tools. Edits and execution require action review; **Stop** terminates a running command and its children. Execution is sandboxed, capped at 120 seconds per command, with bounded output and network off unless an approved command requests it. Python and Git are bundled; other development runtimes must be installed.
 
-Complex tasks can use a cloud planner after you allow workspace contents and command output to reach the selected cloud provider. That permission is off by default, with a per-task review if needed. Computer observations and private memory lookups are excluded from the cloud coding loop. MCP actions can participate after a review explicitly authorizes sending that tool result to the selected provider. Tool results are data, not instructions. The agent decides how to inspect, edit, test, and iterate; it does not follow a fixed action script.
+All action planning stays local: computer use, Blender, workspace/code execution and configured MCP tools. Cloud selection and older sharing preferences cannot override this rule. Cloud models remain available for ordinary answers and research. Tool results and local-control conversation turns stay out of later cloud context.
 
 ## Automatic cloud models
 
 Automatic selection is on by default. Fabric discovers the models available to your OpenAI account, filters for compatible text/reasoning models, and selects a capability tier from task complexity: simple, standard, complex, or expert. The pool refreshes daily or from Settings. Exact model and provider request counts are shown in the app. Turn automatic selection off to choose a pinned model from the dropdown. Discovery failure is reported rather than pretending unavailable models can be used. New model IDs are eligible without editing a whitelist. OpenAI is built in; additional Responses-compatible providers can be added. Provider-specific capability names vary, so review the selected model for unfamiliar catalogs.
 
-Conversation context is shared across prompts within a chat: the recent transcript and conversation opening are retained within a bounded context budget. This is separate from optional retrieval of saved memories. Cloud coding continuations can reuse context already shared from the same workspace after approval; unrelated private memory remains local.
+Conversation context is shared across prompts within a chat: the recent transcript and conversation opening are retained within a bounded context budget. This is separate from optional retrieval of saved memories. Local-control continuations stay local; their file results and observations are excluded from cloud conversation context.
 
 The live status shows only the current operation (selecting a model, reading a file, running a command, or writing the reply), with a small animated indicator. It does not display a thought process or a growing step list.
 
@@ -84,10 +84,22 @@ Browser-control requests stay on the Mac and do not silently fall back to backgr
 
 ## Approval and computer planning
 
-**Settings → General → Auto-approve all actions** lets code, workspace edits, computer controls, and configured MCP calls run without individual reviews. It is off by default. Stop still cancels the current task. macOS permissions remain required; sharing workspace data with a cloud model still needs its own permission. Automatic approvals are recorded in Activity. Changing the setting can release an action already waiting for review.
+**Settings → General → Auto-approve all actions** lets code, workspace edits, computer controls, and configured MCP calls run without individual reviews. It is off by default. Stop still cancels the current task. macOS permissions remain required; cloud models cannot plan or direct local actions. Automatic approvals are recorded in Activity. Changing the setting can release an action already waiting for review.
 
-**Settings → Cloud → Computer planning** separately allows the selected provider to receive app text and control results, which can contain private onscreen information. It is off by default and scoped to that provider. Screenshots stay local. With permission and an available cloud provider, Auto can choose a more capable model to plan the actions; Fabric's own helper still executes them. Local mode keeps planning local. Computer tasks check Accessibility before execution and discard superseded UI paths. Window contents are observed before menus. Input waits for the target app to activate.
+Computer planning is always local. The cloud computer-planning switch has been removed and older opt-ins are ignored. Computer tasks still check actual macOS permissions before execution.
 
 For Chromium-based apps the helper requests the fuller accessibility tree as an assistive client after macOS trust is granted, following [Chromium's accessibility documentation](https://www.chromium.org/developers/design-documents/accessibility/). Canvas-only or otherwise inaccessible app content still limits text-based computer control; screenshot visual grounding is not implemented.
 
 Replies and code/HTML blocks have Copy buttons. Recorded command outputs can be copied from the reply's command receipt or Activity. The last command's actual exit status is shown separately from model prose. Final answer evidence prioritizes the newest results, so corrected failures do not displace a later successful run. App controls retain their observed target across approval dialogs instead of typing into whichever window became frontmost.
+
+Blocked action tasks retain their original request in the conversation. Access confirmations such as “I have given you access” resume that task, while explanation questions and new topics do not replay it. Fabric rechecks actual macOS access before planning and supplies the verified runtime state to the planner. Completion checks can send an unfinished plan back for the missing work; browser launch alone is not proof of typing or search. Unfinished operational drafts are excluded from new final replies and model context.
+
+Auto mode keeps simple and standard tasks local. It uses local search/page reading and local generation for ordinary web searches; freshness alone does not select a cloud model. Complex/expert synthesis or an explicit Cloud choice can still use cloud.
+
+Connections now has a local-command/remote-URL setup form, optional credentials and a connection test. Tests do not save drafts or replace existing sessions. Saved connections can be edited, enabled/disabled, reconnected, removed and restored with Undo. Raw JSON remains under Advanced; interactive OAuth is not implemented.
+
+## Blender files
+
+Blender file tasks receive a local `blender` tool with workspace/project guidance and configured MCP tools. It executes model-selected bpy code using the installed Blender application in a sandboxed background process. It can start a General scene, inspect an existing workspace .blend file, and save edits. Saved files are reopened for scene verification. Existing output files require an explicit overwrite argument. GUI permissions are not needed for this path; the unsaved scene in the running Blender window is separate. Use computer controls or an explicitly configured MCP connection when working with that live scene. Blender planning and file results remain local.
+
+Follow-ups such as “it is enabled” and “I want you to do it” retain the original blocked task. Blender replies report actual verified file results instead of inventing Accessibility requirements.

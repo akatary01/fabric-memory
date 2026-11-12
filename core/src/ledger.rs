@@ -52,6 +52,7 @@ impl Ledger {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
           CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, actor TEXT NOT NULL, clock INTEGER NOT NULL, payload TEXT NOT NULL, UNIQUE(actor,clock));
+          CREATE TABLE IF NOT EXISTS memory_dates(memory TEXT PRIMARY KEY, recorded_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS heads(memory TEXT PRIMARY KEY, event TEXT NOT NULL, vector TEXT);
           CREATE INDEX IF NOT EXISTS event_clock ON events(clock);")?;
         db.execute(
@@ -194,6 +195,10 @@ impl Ledger {
         Ok(inserted)
     }
 
+    pub fn memory_recorded_at(&self, memory: &str) -> Result<Option<u64>> {
+        Ok(self.db.query_row("SELECT recorded_at FROM memory_dates WHERE memory=?1", [memory], |row| row.get(0)).optional()?)
+    }
+
     fn insert(
         tx: &rusqlite::Transaction<'_>,
         event: &Event,
@@ -216,6 +221,9 @@ impl Ledger {
             "INSERT INTO events VALUES(?1,?2,?3,?4)",
             params![event.id, event.actor, event.clock, payload],
         )?;
+        if !event.deleted {
+            tx.execute("INSERT OR IGNORE INTO memory_dates VALUES(?1, unixepoch())", [&event.memory])?;
+        }
         let head: Option<String> = tx
             .query_row(
                 "SELECT event FROM heads WHERE memory=?1",
@@ -237,6 +245,10 @@ impl Ledger {
         Ok(true)
     }
 
+    pub fn live_count(&self) -> Result<u64> {
+        Ok(self.db.query_row("SELECT COUNT(*) FROM heads WHERE vector IS NOT NULL", [], |row| row.get(0))?)
+    }
+
     /// Current live memories for application views; full history remains in events().
     pub fn current(&self, limit: usize) -> Result<Vec<Event>> {
         let mut stmt = self.db.prepare(
@@ -252,6 +264,29 @@ impl Ledger {
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
 
+    /// Forget a current memory once, retaining its visibility for sync.
+    pub fn forget(&mut self, memory: &str) -> Result<bool> {
+        let tx = self.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let head: Option<String> = tx.query_row(
+            "SELECT event FROM heads WHERE memory=?1 AND vector IS NOT NULL",
+            [memory],
+            |row| row.get(0),
+        ).optional()?;
+        let Some(head) = head else { return Ok(false); };
+        let previous: Event = serde_json::from_str(&head)?;
+        let clock = tx.query_row("SELECT COALESCE(MAX(clock),0)+1 FROM events", [], |row| row.get(0))?;
+        let event = Self::tombstone(&self.actor, previous, clock);
+        event.validate()?;
+        Self::insert(&tx, &event, None)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    fn tombstone(actor: &str, previous: Event, clock: u64) -> Event {
+        Event { version: 1, id: uuid::Uuid::new_v4().to_string(), actor: actor.into(), clock,
+            memory: previous.memory, deleted: true, text: String::new(), embedding: None, access: previous.access }
+    }
+
     /// Forget every live memory atomically, preserving immutable deletion history.
     pub fn clear(&mut self, expected: usize) -> Result<usize> {
         let tx = self.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -262,14 +297,14 @@ impl Ledger {
         };
         ensure!(live.len()==expected,"Memory changed while the confirmation was open. Review the count and try again.");
         let clock:u64=tx.query_row("SELECT COALESCE(MAX(clock),0)+1 FROM events",[],|row|row.get(0))?;
-        for (index,previous) in live.iter().enumerate() {
-            let event=Event{version:1,id:uuid::Uuid::new_v4().to_string(),actor:self.actor.clone(),clock:clock+index as u64,
-                memory:previous.memory.clone(),deleted:true,text:String::new(),embedding:None,access:previous.access.clone()};
+        let count = live.len();
+        for (index,previous) in live.into_iter().enumerate() {
+            let event=Self::tombstone(&self.actor,previous,clock+index as u64);
             event.validate()?;
             Self::insert(&tx,&event,None)?;
         }
         tx.commit()?;
-        Ok(live.len())
+        Ok(count)
     }
 
     pub fn export(&self, path: &Path) -> Result<()> {

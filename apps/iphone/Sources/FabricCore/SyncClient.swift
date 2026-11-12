@@ -2,6 +2,53 @@ import Foundation
 import Security
 import Darwin
 
+private func sampleDeviceUsage(at path: String) -> [String: Any] {
+    let host = mach_host_self()
+    defer { mach_port_deallocate(mach_task_self_, host) }
+    func cpuTicks() -> [UInt32]? {
+        var load = host_cpu_load_info()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &load) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { return nil }
+        return [load.cpu_ticks.0, load.cpu_ticks.1, load.cpu_ticks.2, load.cpu_ticks.3]
+    }
+    var sample: [String: Any] = [:]
+    if let start = cpuTicks() {
+        Thread.sleep(forTimeInterval: 0.2)
+        if let end = cpuTicks() {
+            let delta = zip(start, end).map { UInt64($1 &- $0) }
+            let total = delta.reduce(0, +)
+            if total > 0 {
+                sample["cpu_percent"] = 100 * Double(total - delta[Int(CPU_STATE_IDLE)]) / Double(total)
+            }
+        }
+    }
+    var vm = vm_statistics64()
+    var vmCount = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+    let vmStatus = withUnsafeMutablePointer(to: &vm) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(vmCount)) {
+            host_statistics64(host, HOST_VM_INFO64, $0, &vmCount)
+        }
+    }
+    if vmStatus == KERN_SUCCESS {
+        let total = ProcessInfo.processInfo.physicalMemory
+        let pages = UInt64(vm.active_count) + UInt64(vm.wire_count) + UInt64(vm.compressor_page_count)
+        sample["memory_total"] = total
+        sample["memory_used"] = min(total, pages * UInt64(getpagesize()))
+    }
+    if let disk = try? FileManager.default.attributesOfFileSystem(forPath: path),
+       let size = disk[.systemSize] as? NSNumber,
+       let free = disk[.systemFreeSize] as? NSNumber {
+        sample["disk_total"] = size.uint64Value
+        sample["disk_used"] = size.uint64Value - min(size.uint64Value, free.uint64Value)
+    }
+    return sample
+}
+
 public struct Pairing: Codable {
     public let version:Int
     public let type:String
@@ -90,6 +137,7 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
         var components=URLComponents(url:URL(string:pairing.url)!.appendingPathComponent(path),resolvingAgainstBaseURL:false)!
         if !query.isEmpty { components.queryItems=query }
         var request=URLRequest(url:components.url!);request.httpMethod=body == nil ? "GET":"POST";request.httpBody=body
+        if path == "v1/device-usage" { request.timeoutInterval = 4 }
         request.setValue("Bearer "+pairing.token,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         let data:Data;let response:URLResponse
         do { (data,response)=try await session.data(for:request) }
@@ -133,6 +181,13 @@ public final class SyncClient:NSObject,URLSessionDelegate,URLSessionTaskDelegate
             let page:Page=try await request("v1/events",query:query)
             let allowed=page.events.filter{event in guard let access=event.access else{return true};if event.actor==ledger.actor{return true};if access.scope=="private"{return false};return access.scope=="public"};downloaded+=try ledger.ingest(allowed,adapter:adapter);commit=page.commit;after=page.next_after
         } while after != nil
+        if pairing.device_id != nil {
+            struct UsageAcknowledgement: Decodable { let received: Bool }
+            let sample = sampleDeviceUsage(at: NSHomeDirectory())
+            if !sample.isEmpty, let data = try? JSONSerialization.data(withJSONObject: sample) {
+                let _: UsageAcknowledgement? = try? await request("v1/device-usage", body: data)
+            }
+        }
         return SyncResult(uploaded:uploaded,downloaded:downloaded,commit:commit ?? "")
     }
     public struct Turn:Codable { public let role:String;public let content:String;public init(role:String,content:String){self.role=role;self.content=content} }

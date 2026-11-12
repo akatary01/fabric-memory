@@ -1,4 +1,5 @@
 mod agent_docs;
+mod attachments;
 mod agent_settings;
 mod failure;
 // The WebView is a thin client; memory, inference and persistence stay in Rust.
@@ -9,6 +10,8 @@ mod cloud;
 mod cloud_models;
 mod cloud_settings;
 mod computer;
+mod delegation;
+mod blender;
 mod conversations;
 mod generation;
 mod mcp;
@@ -22,6 +25,7 @@ mod service;
 mod standalone;
 mod sync;
 mod usage;
+mod verification;
 mod web;
 mod workspace;
 use tauri::Manager;
@@ -74,6 +78,34 @@ fn main() {
                 window.show()?;
                 window.set_focus()?;
             }
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, MenuItem};
+                let status = MenuItem::with_id(app, "screen_control_status", "Screen idle", false, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&status])?;
+                let tray = tauri::tray::TrayIconBuilder::with_id("memory-fabric")
+                    .menu(&menu)
+                    .icon(screen_status_icon(false))
+                    .icon_as_template(true)
+                    .tooltip("Memory Fabric: screen idle")
+                    .build(app)?;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let mut active = false;
+                    loop {
+                        let current = handle.try_state::<backend::Backend>()
+                            .is_some_and(|backend| backend.screen_active());
+                        if current != active {
+                            active = current;
+                            let tooltip = if active { "Memory Fabric: controlling the screen" } else { "Memory Fabric: screen idle" };
+                            let _ = tray.set_icon_with_as_template(Some(screen_status_icon(active)), true);
+                            let _ = tray.set_tooltip(Some(tooltip));
+                            let _ = status.set_text(if active { "Controlling the screen" } else { "Screen idle" });
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                });
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 if let Some(backend) = handle.try_state::<backend::Backend>() {
@@ -86,4 +118,23 @@ fn main() {
         .invoke_handler(tauri::generate_handler![service::app_command])
         .run(tauri::generate_context!())
         .expect("could not run Memory Fabric");
+}
+
+
+#[cfg(target_os = "macos")]
+fn screen_status_icon(active: bool) -> tauri::image::Image<'static> {
+    const SIZE: usize = 18;
+    let mut pixels = vec![0; SIZE * SIZE * 4];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let frame = (2..=15).contains(&x) && (3..=12).contains(&y)
+                && (x == 2 || x == 15 || y == 3 || y == 12);
+            let stand = (7..=10).contains(&x) && y == 14;
+            let indicator = active && (6..=11).contains(&x) && (6..=9).contains(&y);
+            if frame || stand || indicator {
+                pixels[(y * SIZE + x) * 4 + 3] = 255;
+            }
+        }
+    }
+    tauri::image::Image::new_owned(pixels, SIZE as u32, SIZE as u32)
 }

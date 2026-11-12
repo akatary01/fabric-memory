@@ -31,10 +31,10 @@ pub fn prepare() -> Result<Option<Child>, Box<dyn std::error::Error>> {
             }
         }
     }
-    let manifest = models.join("manifests/registry.ollama.ai/library/lfm3");
+    let manifest = models.join("manifests/registry.ollama.ai/library/lfm3-vl");
     std::fs::create_dir_all(&manifest)?;
-    let tag="1.7b-q4_K_M";
-    if !manifest.join(tag).exists() { std::fs::copy(seed.join("manifests/registry.ollama.ai/library/lfm3").join(tag),manifest.join(tag))?; }
+    let tag="latest";
+    if !manifest.join(tag).exists() { std::fs::copy(seed.join("manifests/registry.ollama.ai/library/lfm3-vl").join(tag),manifest.join(tag))?; }
     // Allocate private ports, avoiding the recipient's existing Ollama/search services.
     let llm = std::net::TcpListener::bind("127.0.0.1:0")?;
     let search = std::net::TcpListener::bind("127.0.0.1:0")?;

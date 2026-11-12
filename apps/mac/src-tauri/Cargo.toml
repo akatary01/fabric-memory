@@ -6,7 +6,7 @@ license = "MIT"
 
 [dependencies]
 fabric-core = { path = "../../../core" }
-tauri = { version = "2.12", default-features = false, features = ["wry", "config-toml"] }
+tauri = { version = "2.12", default-features = false, features = ["wry", "config-toml", "tray-icon"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 scraper = "0.24"
