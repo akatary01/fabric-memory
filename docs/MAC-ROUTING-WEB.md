@@ -1,10 +1,10 @@
 # Mac routing and user tools
 
-Run `fabric-memory run` to start the local model and open the Mac app. The main agent always runs locally.
+Run `fabric-memory run` to start the local model and open the Mac app. Task intake and tool execution run locally.
 
 - **Local** keeps worker requests on this Mac.
-- **Auto** can consult a cloud worker for complex, shareable requests.
-- **Cloud** prefers cloud advice for eligible requests. Local action planning and tool results stay on the Mac.
+- **Auto** uses a cloud model for eligible reasoning and writing.
+- **Cloud** uses cloud generation for eligible standalone requests. Local action planning and tool results stay on the Mac.
 
 Configure providers and tokens in Settings → Cloud. Public research runs automatically when requested. A small local model prepares the query, and the web reader retrieves public pages through SearXNG. Set `FABRIC_WEB_MODEL` to another installed local model or `FABRIC_SEARCH_URL` to a compatible SearXNG endpoint.
 

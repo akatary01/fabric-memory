@@ -11,8 +11,11 @@ const FILES:&[(&str,&str)]=&[
 ("docs/LOCAL-LLM.md",include_str!("../../../../docs/LOCAL-LLM.md")),
 ("docs/MAC-ROUTING-WEB.md",include_str!("../../../../docs/MAC-ROUTING-WEB.md")),
 ("docs/SYNC.md",include_str!("../../../../docs/SYNC.md"))];
+pub fn setup() -> &'static str {
+    include_str!("../../../../docs/AGENT-SETUP.md")
+}
 pub fn for_task(coding: bool, visual: bool, computer: bool, web: bool) -> String {
-    let mut guides = Vec::new();
+    let mut guides = vec![setup()];
     if coding {
         guides.extend([
             include_str!("../../../../docs/AGENT-CODING-WORKFLOW.md"),

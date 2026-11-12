@@ -32,12 +32,12 @@ for (const [id, values] of [['answer-mode', ['auto','local','cloud']], ['web-mod
 }
 function updateRoutingHint() {
   const mode = $('answer-mode').value;
-  const workers = mode === 'local' ? 'Workers run on this Mac.' :
-    !cloudAvailable ? 'Workers run on this Mac. Set up a provider in Cloud to enable cloud workers.' :
-    mode === 'cloud' ? 'The main agent consults a cloud worker for shareable requests.' :
-    'The main agent can consult cloud workers for complex, shareable requests.';
+  const description = mode === 'local' ? 'Answers and tools run on this Mac.' :
+    !cloudAvailable ? 'Set up a provider in Cloud to enable cloud answers.' :
+    mode === 'cloud' ? 'Cloud answers eligible requests. Private context and tools stay on this Mac.' :
+    'Auto uses cloud for eligible reasoning. Private context and tools stay on this Mac.';
   renderContext();
-  $('routing-hint').textContent = `The main agent runs on this Mac. ${workers}`;
+  $('routing-hint').textContent = description;
 }
 
 function renderConversation(turns) {
@@ -138,7 +138,7 @@ async function loadConversation() {
   cloudAvailable = state.cloud_available;
   $('cloud-connection-state').textContent=cloudAvailable?'Available':'Not configured';
   $('local-model-name').textContent=state.model+' · This Mac';
-  $('cloud-model-name').textContent=cloudAvailable?state.cloud_model:'Optional cloud workers';
+  $('cloud-model-name').textContent=cloudAvailable?state.cloud_model:'Optional cloud answers';
 
   updateRoutingHint();
   const run = activeRuns.get(state.id);
@@ -595,7 +595,7 @@ function renderContext(){
   const last=conversationState.turns.filter(turn=>turn.role==='assistant').at(-1);
   $('context-model').textContent=last?.model||conversationState.model||'Local model';
   $('context-executor').textContent=last?.provider==='cloud'?'Cloud provider':'This Mac';
-  $('context-cloud').textContent='□ Main agent runs locally';
+  $('context-cloud').textContent='□ Local tool execution';
   const list=$('context-memories');list.replaceChildren();
   if(!allMemories.length){const p=document.createElement('p');p.className='chat-hint';p.textContent='No saved memories yet.';list.append(p);return;}
   allMemories.slice(-3).reverse().forEach(memory=>{

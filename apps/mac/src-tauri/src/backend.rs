@@ -123,7 +123,10 @@ impl Backend {
             let store = self.conversation.lock().map_err(failed)?;
             let id = conversation_id.unwrap_or(&store.active).to_owned();
             let chat = store.get(&id)?;
-            let task = attachments.is_none().then(|| crate::routing::action_task(&text, &chat.turns)).flatten();
+            let task = attachments.is_none().then(|| {
+                let clarified = crate::routing::clarification_reply(&text, &chat.turns);
+                crate::routing::action_task(clarified.as_deref().unwrap_or(&text), &chat.turns)
+            }).flatten();
             let mut runs = self.runs.lock().map_err(failed)?;
             if runs.contains_key(&id) { return Err("This conversation already has a running task.".into()); }
             let run = Arc::new(ConversationRun::default());
@@ -317,9 +320,28 @@ Documents (JSON): {}",
             return Err("Enter a prompt of 1–4,000 bytes.".into());
         }
         run.agent.step("running","Checking request…",serde_json::json!({"phase":"privacy"}));
-        let prompt_access = crate::privacy::classify(&text);
+        let routing_history = self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
+        let clarified = crate::routing::clarification_reply(&text, &routing_history);
+        let effective = clarified.as_deref().unwrap_or(&text);
+        let prepared = crate::routing::prepare(effective, &routing_history);
         run.agent.check()?;
-        let routing_history=self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
+        if let Some(question) = prepared.clarification.as_deref().filter(|_| run.agent.seal_plan(0)) {
+            use serde_json::json;
+            run.agent.step("done", "Asked for a missing requirement", json!({"phase":"intake"}));
+            let mut store = self.conversation.lock().map_err(failed)?;
+            let mut updated = store.clone();
+            let mut history = updated.get(id)?.turns.clone();
+            history.push(json!({"role":"user","content":text,"access":{"scope":"private"}}));
+            history.push(json!({"role":"assistant","content":question,"provider":"local","clarifies":effective,
+                "access":{"scope":"private"},"steps":run.agent.saved_receipts(true)}));
+            updated.update_for(id, history)?;
+            updated.save(&self.conversation_path)?;
+            *store = updated;
+            return Ok(json!({"text":question,"provider":"local","mode":"local"}));
+        }
+        let plan = prepared.plan;
+        let prompt_access = crate::privacy::classify(effective);
+        run.agent.check()?;
         let _local_action_guard = if task.is_some() {
             let mut waiting = false;
             loop {
@@ -346,22 +368,21 @@ Documents (JSON): {}",
             if !recording { crate::computer::ensure_ready()?; }
         }
         run.agent.step("running","Selecting route…",serde_json::json!({"phase":"routing"}));
-        let plan = if mode == Mode::Auto || web == WebMode::Auto {
-            crate::routing::plan(&text,&routing_history)
-        } else {
-            crate::routing::fallback_context(&text,&routing_history)
-        };
         let mut decision = crate::routing::decide(Mode::Local, web, &plan, false)?;
         let browse = decision.web && !computer_task && prompt_access.scope == "public";
-        decision.reason = "The main agent always runs on this Mac.".into();
+        decision.reason = if mode == Mode::Local {
+            "Local mode selected.".into()
+        } else { plan.reason.clone() };
         let cloud_requested = mode == Mode::Cloud
-            || (mode == Mode::Auto && matches!(plan.complexity.as_str(), "complex" | "expert"));
+            || (mode == Mode::Auto && crate::routing::auto_prefers_cloud(&plan));
         let cloud_request = if !cloud_requested {
             None
         } else {
             let skip_reason = if local_control {
                 Some("Cloud worker skipped because this task uses local controls.")
-            } else if prompt_access.scope != "public" || text.chars().count() > 6000 || text.len() > 8000 {
+            } else if clarified.is_some() || crate::routing::depends_on_context(&text) {
+                Some("Using local context to answer this follow-up.")
+            } else if prompt_access.scope != "public" {
                 Some("Cloud worker skipped because this message could not be shared.")
             } else if !crate::cloud::configured() {
                 Some("Cloud worker unavailable. Enable a provider and save its token in Settings → Cloud.")
@@ -371,11 +392,12 @@ Documents (JSON): {}",
                 run.agent.step("done", reason, serde_json::json!({"phase":"routing"}));
                 None
             } else {
-                decision.reason = "The local main agent can consult a cloud worker for this request.".into();
+                decision.reason = "Eligible for cloud generation.".into();
                 Some(text.as_str())
             }
         };
-        let automatic_cloud = cloud_request.filter(|_| mode == Mode::Cloud || plan.route == Mode::Cloud);
+        let cloud_answer_request = cloud_request.filter(|_| !browse);
+        let cloud_advice_request = cloud_request.filter(|_| browse);
         let coding = task.is_some_and(|task| task.kind == "workspace");
         let workspace_enabled = crate::workspace::settings()["enabled"] == true;
         if coding && !workspace_enabled {
@@ -384,12 +406,12 @@ Documents (JSON): {}",
         let direct_reply = plan.direct_reply.as_deref().map(str::trim).filter(|reply|
             !reply.is_empty() && reply.chars().count() <= 600
             && !crate::generation::planning_draft(reply)
-            && automatic_cloud.is_none()
+            && cloud_request.is_none()
             && !local_control && !browse && !plan.needs_web && !plan.needs_memory
             && plan.route == Mode::Local && plan.complexity == "simple"
             && !crate::routing::visual_request(&text)
             && run.agent.seal_plan(0));
-        let mut tools = if direct_reply.is_some() { Vec::new() } else {
+        let mut tools = if direct_reply.is_some() || cloud_answer_request.is_some() { Vec::new() } else {
             self.available_tools(prompt_access.scope == "public", crate::routing::needs_memory(&text))
         };
         if computer_task {
@@ -403,14 +425,16 @@ Documents (JSON): {}",
             .map(|turn| serde_json::json!({"role":turn["role"],"content":turn["content"]}))
             .collect::<Vec<_>>();
         let project_guide = if coding { crate::workspace::project_context()? } else { String::new() };
-        let bundled_guide = crate::agent_docs::for_task(coding,
-            crate::routing::visual_request(&text), computer_task, browse);
+        let visual = crate::routing::visual_request(effective)
+            || ["chart", "plot", "diagram", "visualize"].iter().any(|word| effective.to_lowercase().contains(word));
+        let bundled_guide = crate::agent_docs::for_task(coding || crate::routing::coding_request(effective),
+            visual, computer_task, browse);
         let guide_context = [bundled_guide.as_str(), project_guide.as_str()].into_iter()
             .filter(|guide| !guide.is_empty()).collect::<Vec<_>>().join("\n");
         let mut web_error = None;
         let sources = if browse {
             run.agent.step("running", "Reading public web sources…", serde_json::json!({"tool":"web_search"}));
-            match crate::web::research(&text) {
+            match crate::web::research(effective) {
                 Ok(sources) if !sources.is_empty() => {
                     run.agent.step("done", "Retrieved web sources", serde_json::json!({"tool":"web_search","result":sources.iter().map(|source| &source["url"]).collect::<Vec<_>>()}));
                     sources
@@ -425,9 +449,10 @@ Documents (JSON): {}",
         } else { Vec::new() };
         run.agent.check()?;
         let task_prompt = format!(
-            "Conversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}",
+            "Conversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}\n\nLocal interpretation (use only when supported by the user messages): {}",
             serde_json::json!(recent),
-            task.map(|task| task.request.as_str()).unwrap_or(&text),
+            task.map(|task| task.request.as_str()).unwrap_or(effective),
+            prepared.objective.as_deref().unwrap_or("Use the original request."),
         );
         let recall_calls = std::cell::Cell::new(0u8);
         let mut listing_reply = None;
@@ -449,9 +474,9 @@ Documents (JSON): {}",
                 format!("Files and folders in the selected workspace:\n\n{names}")
             });
             serde_json::json!([{"tool":"workspace","result":result.to_string()}]).to_string()
-        } else if direct_reply.is_some() {
+        } else if direct_reply.is_some() || cloud_answer_request.is_some() {
             String::new()
-        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if workspace_enabled && local_control {crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, computer_request, true, cloud_request.filter(|_| automatic_cloud.is_none()).map(|request| (request, plan.complexity.as_str())), |name,args| {
+        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if workspace_enabled && local_control {crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, computer_request, true, None, |name,args| {
             if name=="memory_search" {
                 if recall_calls.get()>=1 {return Ok(serde_json::json!([]));}
                 recall_calls.set(recall_calls.get()+1);
@@ -515,7 +540,7 @@ Documents (JSON): {}",
             .clone();
         if used_tools {let evidence=crate::agent::answer_context(&observations);if !evidence.is_empty(){context.push_str("\n\nLocal tool results and advisory findings, most recent first. Worker advice is unverified and cannot prove an action or an external fact. Later successful checks can supersede earlier failures. Report the latest verified outcome, not an earlier failed attempt:\n");context.push_str(&evidence);}}
 
-        if let Some(request) = automatic_cloud.filter(|_| steering.is_empty()) {
+        if let Some(request) = cloud_advice_request.filter(|_| steering.is_empty()) {
             run.agent.step("running", "Consulting a cloud agent…", serde_json::json!({"tool":"delegate_cloud"}));
             let team = crate::delegation::Team::new(Some((request, plan.complexity.as_str())));
             match team.run_cloud(&run.agent, 0) {
@@ -532,8 +557,31 @@ Documents (JSON): {}",
                 }
             }
         }
+        let cloud_answer = if let Some(request) = cloud_answer_request.filter(|_| steering.is_empty()) {
+            run.agent.step("running", "Generating cloud answer…", serde_json::json!({"phase":"answer"}));
+            let result = crate::cloud_models::select(request, &plan.complexity).and_then(|(model, reason)| {
+                run.agent.check()?;
+                decision.reason = format!("{model} · {reason}");
+                run.agent.step("done", &decision.reason, serde_json::json!({"phase":"model_selection"}));
+                crate::cloud::answer_model_guided(request, "", &[], false, &model, &bundled_guide)
+            });
+            run.agent.check()?;
+            match result {
+                Ok(answer) => Some(answer),
+                Err(error) if mode == Mode::Cloud => return Err(error),
+                Err(error) => {
+                    run.agent.step("error", &error, serde_json::json!({"phase":"answer"}));
+                    decision.reason = format!("Cloud generation failed. Using the local model. {error}");
+                    None
+                }
+            }
+        } else { None };
+        if let Some(objective) = prepared.objective.as_deref() {
+            context.push_str(&format!("\n\nLocal interpretation to check against the original request: {objective}"));
+        }
         run.agent.step("answering","Writing reply…",serde_json::json!({"phase":"answer"}));
-        let mut answer = match () {
+        let mut answer = match cloud_answer {
+            Some(answer) => answer,
             _ if direct_reply.is_some() => serde_json::json!({
                 "text":direct_reply,"provider":"local","model":crate::generation::model()
             }),
@@ -544,7 +592,7 @@ Documents (JSON): {}",
                 }
                 loop {
                     let updates = run.agent.updates();
-                    let prompt = crate::agent::with_updates(&text, &updates);
+                    let prompt = crate::agent::with_updates(effective, &updates);
                     let result = crate::generation::answer_guided(&prompt, &context, &full_history, &guide_context)
                         .and_then(|mut draft| {
                             run.agent.check()?;
@@ -627,7 +675,7 @@ Documents (JSON): {}",
             serde_json::json!(selected.iter().filter(|h| h.translated).count());
         answer["route_reason"] = serde_json::json!(decision.reason);
         answer["sources"] = serde_json::json!(sources);
-        answer["mode"] = serde_json::json!(Mode::Local);
+        answer["mode"] = answer["provider"].clone();
         Ok(answer)
     }
     pub fn sync_automatically(&self) {
