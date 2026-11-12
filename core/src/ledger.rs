@@ -11,7 +11,7 @@ pub struct Ledger {
     pub dimension: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Hit {
     pub memory: String,
     pub text: String,

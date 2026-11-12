@@ -113,7 +113,7 @@ pub fn call(args: &Value) -> Result<Value, String> {
     {
         return Err(format!("Unsupported computer action: {}. Use observe, resolve_app, open_app, open_url, search_browser, click, type, key, scroll or screenshot.",args["action"].as_str().unwrap_or("missing")));
     }
-    let mut result=helper(args)?;if let Some(app)=result["app"].as_str(){*last_target().lock().map_err(|_|"Computer target unavailable")?=Some(app.into());}result["executed_action"]=args["action"].clone();Ok(result)
+    let mut result=helper(args)?;if args["action"] == "screenshot" { screenshot_path(&result)?; } if let Some(app)=result["app"].as_str(){*last_target().lock().map_err(|_|"Computer target unavailable")?=Some(app.into());}result["executed_action"]=args["action"].clone();Ok(result)
 }
 pub fn image(path: &str) -> Result<Value, String> {
     if !screen_sharing() { return Err("Screen sharing is off.".into()); }
@@ -135,6 +135,23 @@ pub fn image_bytes(path: &str) -> Result<Vec<u8>, String> {
     }
     std::fs::read(file).map_err(|e| e.to_string())
 }
+pub fn simple_screenshot(question: &str) -> bool {
+    let text = question.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
+    let text = ["can you ", "could you ", "please "].into_iter()
+        .fold(text.as_str(), |text, prefix| text.strip_prefix(prefix).unwrap_or(text));
+    let text = [" of my screen", " of the screen", " of my desktop", " of the main display", " now"]
+        .into_iter().fold(text, |text, suffix| text.strip_suffix(suffix).unwrap_or(text));
+    matches!(text, "take a screenshot" | "take screenshot" | "capture a screenshot" | "capture my screen" | "screenshot my screen")
+}
+
+pub fn screenshot_path(result: &Value) -> Result<&str, String> {
+    let path = result["image_path"].as_str().ok_or("Screenshot did not produce a file.")?;
+    if !image_bytes(path)?.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("Screenshot did not produce a valid PNG.".into());
+    }
+    Ok(path)
+}
+
 pub fn recording_requested(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     text.contains("record") && ["screen", "display", "video", "audio"].iter().any(|word| text.contains(word))
@@ -206,7 +223,7 @@ pub fn record(args: &Value, check: impl Fn() -> Result<(), String>) -> Result<Va
 }
 
 pub fn tool() -> Value {
-    json!({"name":"computer","description":"Control this Mac. resolve_app accepts an installed app name or bundle ID; app=browser or web resolves the default browser. open_app accepts those same names. search_browser opens a Google query in the actual default browser (query parameter); open_url navigates an HTTP/HTTPS URL. To target Chrome specifically, pass app=chrome and new_tab=true. Set new_tab=true on each search_browser or open_url call when the user asks for separate tabs. Use a distinct query or URL per requested tab. Navigation dispatch does not confirm page load; observe the resolved browser to verify. Observe the window after navigation to verify the page. First observe before clicking or typing; observations return element paths. click with element plus expected label, or screen_x/screen_y (0 to 1 from the top-left of the main display screenshot); type into a focused field; key with Cmd+A etc; scroll; open_app by bundle ID. screenshot captures the screen for user review. For an explicit recording request, record the main display for 1–60 seconds with audio none, microphone, or system. Requires macOS permissions.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["observe","resolve_app","open_url","search_browser","click","type","key","scroll","open_app","screenshot","record"]},"seconds":{"type":"integer","minimum":1,"maximum":60},"audio":{"type":"string","enum":["none","microphone","system"]},"app":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"new_tab":{"type":"boolean"},"element":{"type":"string"},"expected":{"type":"string"},"screen_x":{"type":"number","minimum":0,"maximum":1},"screen_y":{"type":"number","minimum":0,"maximum":1},"text":{"type":"string"},"key":{"type":"string"},"pixels":{"type":"integer"}},"required":["action"]}})
+    json!({"name":"computer","description":"Control this Mac. resolve_app accepts an installed app name or bundle ID; app=browser or web resolves the default browser. open_app accepts those same names. search_browser opens a Google query in the actual default browser (query parameter); open_url navigates an HTTP/HTTPS URL. To target Chrome specifically, pass app=chrome and new_tab=true. Set new_tab=true on each search_browser or open_url call when the user asks for separate tabs. Use a distinct query or URL per requested tab. Navigation dispatch does not confirm page load; observe the resolved browser to verify. Observe the window after navigation to verify the page. First observe before clicking or typing; observations return element paths. click with element plus expected label, or screen_x/screen_y (0 to 1 from the top-left of the main display screenshot); type into a focused field; key with Cmd+A etc; scroll; open_app by bundle ID. For a screenshot request, call screenshot to save a PNG of the main display. Opening the Screenshot app does not take a screenshot. For an explicit recording request, record the main display for 1–60 seconds with audio none, microphone, or system. Requires macOS permissions.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["observe","resolve_app","open_url","search_browser","click","type","key","scroll","open_app","screenshot","record"]},"seconds":{"type":"integer","minimum":1,"maximum":60},"audio":{"type":"string","enum":["none","microphone","system"]},"app":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"new_tab":{"type":"boolean"},"element":{"type":"string"},"expected":{"type":"string"},"screen_x":{"type":"number","minimum":0,"maximum":1},"screen_y":{"type":"number","minimum":0,"maximum":1},"text":{"type":"string"},"key":{"type":"string"},"pixels":{"type":"integer"}},"required":["action"]}})
 }
 
 pub fn search_tab_count(question: &str) -> Option<usize> {
@@ -357,6 +374,15 @@ pub fn observed_page(result: &Value, expected: &str) -> bool {
 }
 
 pub fn check_task_outcome(question:&str,steps:&Value)->Result<(),String>{
+ let request = question.to_ascii_lowercase();
+ if ["take a screenshot", "take screenshot", "capture a screenshot"].iter().any(|phrase| request.contains(phrase))
+     && !["don't take", "do not take", "without taking", "don't capture", "do not capture"].iter().any(|phrase| request.contains(phrase))
+     && !steps.as_array().into_iter().flatten().any(|step| step["tool"] == "computer"
+         && step["kind"] == "done" && effective_action(step) == "screenshot"
+         && step["result"]["image_path"].is_string()) {
+    return Err("No screenshot was captured. Use the computer screenshot action and verify its saved file.".into());
+ }
+
  if recording_requested(question) && !steps.as_array().into_iter().flatten().any(|step|
      step["tool"] == "computer" && step["kind"] == "done" && step["result"]["executed_action"] == "record"
  ) {
@@ -594,5 +620,24 @@ mod navigation_verification_tests {
         assert!(check_task_outcome("Open the page", &steps).is_err());
         steps.as_array_mut().unwrap()[1] = observed("Example recipe", target);
         assert!(check_task_outcome("Open the page", &steps).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod screenshot_completion_tests {
+    use super::*;
+
+    #[test]
+    fn opening_screenshot_is_distinct_from_capturing_an_image() {
+        let goal = "Please take a screenshot of my screen.";
+        assert!(simple_screenshot(goal));
+        assert!(!simple_screenshot("Open the Screenshot app"));
+        assert!(!simple_screenshot("Take a screenshot of the Finder window"));
+        let launch = json!([{"tool":"computer","kind":"done","action":"open_app",
+            "result":{"opened":"com.apple.screenshot.launcher"}}]);
+        assert!(check_task_outcome(goal, &launch).unwrap_err().contains("No screenshot was captured"));
+        let capture = json!([{"tool":"computer","kind":"done","action":"screenshot",
+            "result":{"image_path":"/fixture/Captures/screen.png"}}]);
+        assert!(check_task_outcome(goal, &capture).is_ok());
     }
 }

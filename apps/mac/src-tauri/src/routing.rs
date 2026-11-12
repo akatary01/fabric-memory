@@ -169,7 +169,7 @@ pub fn computer_intent(question:&str)->bool {
     if visual_request(question) && !["my screen","on my mac","my desktop","use the computer"].iter().any(|s|text.contains(s)){return false;}
     let text=text.replace("open source", "source").replace("open-source", "source").replace("open-ended", "broad").replace("open problem", "problem").replace("open question", "question");
     if ["how do ","how can ","is it possible","explain ","what is ","what are ","tell me about"].iter().any(|prefix|text.starts_with(prefix)) && !text.contains("my screen"){return false;}
-    ["my screen","screenshot","screen recording","record the screen","record screen","record my","record a video","record audio","record system audio","record microphone","click ","scroll ","type into","type in ","press ","open ","close ","launch ","install ","on my mac","in finder","my desktop","check my ","find my ","use the computer","use computer"].iter().any(|term|text.contains(term))
+    ["my screen","screenshot","capture the screen","screen recording","record the screen","record screen","record my","record a video","record audio","record system audio","record microphone","click ","scroll ","type into","type in ","press ","open ","close ","launch ","install ","on my mac","in finder","my desktop","check my ","find my ","use the computer","use computer"].iter().any(|term|text.contains(term))
 }
 pub fn context_task(history:&[serde_json::Value])->Option<&str>{history.iter().rev().filter(|t|t["role"]=="user").filter_map(|t|t["content"].as_str()).find(|text|visual_request(text)||coding_request(text)||!crate::generation::use_history(text))}
 pub fn fallback(question: &str) -> Plan {

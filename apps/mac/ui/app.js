@@ -978,6 +978,20 @@ function showObservation(result) {
   $('observed-window').textContent = result.window_title || result.app || 'Last browser observation';
   $('observed-controls').textContent = result.ui || 'No controls were recorded.';
   $('computer-observation').showModal();
+  if (result.image_path) {
+    const request = previewRequest;
+    $('observed-window').textContent = 'Saved screenshot';
+    $('observed-controls').textContent = result.image_path;
+    invoke('computer_image', {path: result.image_path}).then(bytes => {
+      if (request !== previewRequest) return;
+      previewUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], {type:'image/png'}));
+      const image = $('screen-preview-image');
+      image.src = previewUrl;
+      image.hidden = false;
+    }).catch(error => {
+      if (request === previewRequest) $('screen-preview-status').textContent = error.message;
+    });
+  }
 }
 $('show-current-observation').addEventListener('click', () => {
   const step = (taskState.steps || []).findLast(entry => entry.tool === 'computer' && entry.result?.ui);
@@ -1024,10 +1038,10 @@ function appendTaskSteps(list, steps, showOutputs = false) {
       line.append(command);
     }
     if (showOutputs && result != null) {
-      if (step.tool === 'computer' && result.ui) {
+      if (step.tool === 'computer' && (result.ui || result.image_path)) {
         const view = document.createElement('button');
         view.className = 'text-button';
-        view.textContent = 'What Fabric saw';
+        view.textContent = result.image_path ? 'View screenshot' : 'What Fabric saw';
         view.addEventListener('click', () => showObservation(result));
         line.append(view);
       }

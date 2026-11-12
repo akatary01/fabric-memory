@@ -324,7 +324,11 @@ Documents (JSON): {}",
         let routing_history = self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
         let clarified = crate::routing::clarification_reply(&text, &routing_history);
         let effective = clarified.as_deref().unwrap_or(&text);
-        let prepared = crate::routing::prepare(effective, &routing_history);
+        let prepared = if crate::computer::simple_screenshot(effective) {
+            crate::routing::Prepared::fallback(effective, &routing_history)
+        } else {
+            crate::routing::prepare(effective, &routing_history)
+        };
         run.agent.check()?;
         if let Some(question) = prepared.clarification.as_deref().filter(|_| run.agent.seal_plan(0)) {
             use serde_json::json;
@@ -363,10 +367,11 @@ Documents (JSON): {}",
         let computer_task = task.is_some_and(|task| task.kind == "computer");
         let computer_request = task.filter(|_| computer_task).map(|task| task.request.as_str());
         let recording = computer_request.is_some_and(crate::computer::recording_requested);
+        let screenshot = computer_request.is_some_and(crate::computer::simple_screenshot);
         let local_control = task.is_some();
         if computer_task {
             crate::computer::begin_task();
-            if !recording { crate::computer::ensure_ready()?; }
+            if !recording && !screenshot { crate::computer::ensure_ready()?; }
         }
         run.agent.step("running","Selecting route…",serde_json::json!({"phase":"routing"}));
         let mut decision = crate::routing::decide(Mode::Local, web, &plan, false)?;
@@ -381,7 +386,7 @@ Documents (JSON): {}",
         } else {
             let skip_reason = if local_control {
                 Some("Cloud worker skipped because this task uses local controls.")
-            } else if clarified.is_some() || crate::routing::depends_on_context(&text) {
+            } else if clarified.is_some() || crate::generation::execution_question(&text) {
                 Some("Using local context to answer this follow-up.")
             } else if prompt_access.scope != "public" {
                 Some("Cloud worker skipped because this message could not be shared.")
@@ -455,15 +460,22 @@ Documents (JSON): {}",
             prepared.objective.as_deref().unwrap_or("Use the original request."),
         );
         let recall_calls = std::cell::Cell::new(0u8);
-        let mut listing_reply = None;
-        let observations = if coding && task.is_some_and(|task| crate::routing::workspace_listing(&task.request))
+        let mut verified_reply = None;
+        let observations = if screenshot && run.agent.seal_plan(0) {
+            let args = serde_json::json!({"action":"screenshot"});
+            let result = run.agent.run_known_action("computer", &args, "Capture the main display", ||
+                self.execute_tool(run, "computer", &args, &tools))?;
+            let path = crate::computer::screenshot_path(&result)?;
+            verified_reply = Some(format!("Screenshot saved to `{path}`."));
+            serde_json::json!([{"tool":"computer","result":result.to_string()}]).to_string()
+        } else if coding && task.is_some_and(|task| crate::routing::workspace_listing(&task.request))
             && run.agent.seal_plan(0)
         {
             let args = serde_json::json!({"action":"list","path":"."});
             let result = run.agent.run_known_action("workspace", &args, "List the workspace files", ||
                 self.execute_tool(run, "workspace", &args, &tools))?;
             let entries = result["entries"].as_array().ok_or("The workspace listing returned no entries field.")?;
-            listing_reply = Some(if entries.is_empty() {
+            verified_reply = Some(if entries.is_empty() {
                 "The selected workspace is empty. If your files are in another folder, select it in Settings → Coding workspace.".into()
             } else {
                 let names = entries.iter().filter_map(|entry| entry["name"].as_str().map(|name| {
@@ -504,7 +516,7 @@ Documents (JSON): {}",
             .map_err(failed)?
             .encode(&text)
             .map_err(failed)?;
-        let recalled = receipts
+        let mut recalled = receipts
             .as_array()
             .into_iter()
             .flatten()
@@ -514,7 +526,18 @@ Documents (JSON): {}",
                     .unwrap_or_default()
             })
             .collect::<Vec<_>>();
-        // Only tool-selected recall enters the answer. Never run a second forced lookup.
+        let needs_context = crate::routing::depends_on_context(&text);
+        let mut background = None;
+        if let Some(request) = cloud_request.filter(|_| steering.is_empty()) {
+            let hits = self.ledger.lock().map_err(failed)?.search(&query, 16).unwrap_or_default();
+            background = crate::recall::cloud_background(request, &routing_history, hits.clone(), needs_context);
+            if needs_context && background.is_none() {
+                decision.reason = "The follow-up needs context that could not be shared. Using the local model.".into();
+                run.agent.step("done", &decision.reason, serde_json::json!({"phase":"routing"}));
+                recalled.extend(hits);
+            }
+        }
+        run.agent.check()?;
         let hits=crate::recall::select(recalled);
         let selected: Vec<_> = hits
             .iter()
@@ -540,10 +563,10 @@ Documents (JSON): {}",
             .clone();
         if used_tools {let evidence=crate::agent::answer_context(&observations);if !evidence.is_empty(){context.push_str("\n\nLocal tool results and advisory findings, most recent first. Worker advice is unverified and cannot prove an action or an external fact. Later successful checks can supersede earlier failures. Report the latest verified outcome, not an earlier failed attempt:\n");context.push_str(&evidence);}}
 
-        if let Some(request) = cloud_advice_request.filter(|_| steering.is_empty()) {
+        if let Some((request, background)) = cloud_advice_request.zip(background.as_deref()) {
             run.agent.step("running", "Consulting a cloud agent…", serde_json::json!({"tool":"delegate_cloud"}));
             let team = crate::delegation::Team::new(Some((request, plan.complexity.as_str())));
-            match team.run_cloud(&run.agent, 0) {
+            match team.run_cloud(&run.agent, 0, background) {
                 Ok(advice) => {
                     decision.reason = "The local main agent consulted a cloud worker.".into();
                     run.agent.step("done", "Received cloud advice", serde_json::json!({"tool":"delegate_cloud","result":advice}));
@@ -557,14 +580,14 @@ Documents (JSON): {}",
                 }
             }
         }
-        let cloud_answer = if let Some(request) = cloud_answer_request.filter(|_| steering.is_empty()) {
+        let cloud_answer = if let Some((request, background)) = cloud_answer_request.zip(background.as_deref()) {
             run.agent.step("running", "Generating cloud answer…", serde_json::json!({"phase":"answer"}));
             let result = crate::cloud_models::select(request, &plan.complexity).and_then(|(model, reason)| {
                 run.agent.check()?;
                 decision.reason = format!("{model} · {reason}");
                 run.agent.step("done", &decision.reason, serde_json::json!({"phase":"model_selection"}));
                 run.agent.agent_node("cloud-answer", Some("main"), &model, "running", "Answer generation", None);
-                let result = crate::cloud::answer_model_guided(request, "", &[], false, &model, &bundled_guide);
+                let result = crate::cloud::answer_model_guided(request, background, &[], false, &model, &bundled_guide);
                 let state = if run.agent.check().is_err() { "stopped" } else if result.is_ok() { "done" } else { "failed" };
                 let actual_model = result.as_ref().ok().and_then(|answer| answer["model"].as_str()).unwrap_or(&model);
                 run.agent.agent_node("cloud-answer", Some("main"), actual_model, state, "Answer generation", None);
@@ -590,7 +613,7 @@ Documents (JSON): {}",
             _ if direct_reply.is_some() => serde_json::json!({
                 "text":direct_reply,"provider":"local","model":crate::generation::model()
             }),
-            _ if listing_reply.is_some() => serde_json::json!({"text":listing_reply,"provider":"local"}),
+            _ if verified_reply.is_some() => serde_json::json!({"text":verified_reply,"provider":"local"}),
             _ => {
                 if !local_control {
                     run.agent.allow_updates();
