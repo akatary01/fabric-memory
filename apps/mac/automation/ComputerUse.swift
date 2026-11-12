@@ -241,8 +241,20 @@ func run(_ args:[String:Any])throws->[String:Any]{
  }
  if action=="resolve_app"{return try resolved(args["app"] as? String ?? "browser")}
  if action=="open_app"{
-  let input=args["app"] as? String ?? "browser";let url=try applicationURL(input)
-  guard NSWorkspace.shared.open(url)else{throw ToolError("Could not open that app")};var result=try resolved(input);result["opened"]=result["app"];return result
+  let input = args["app"] as? String ?? "browser"
+  let url = try applicationURL(input)
+  var result = try resolved(input)
+  guard NSWorkspace.shared.open(url) else { throw ToolError("Could not open that app.") }
+  let deadline = Date().addingTimeInterval(3)
+  repeat {
+   if let running = app(result["app"] as? String), !running.isTerminated {
+    result["opened"] = result["app"]
+    result["pid"] = running.processIdentifier
+    return result
+   }
+   RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+  } while Date() < deadline
+  throw ToolError("macOS accepted the launch, but Fabric could not confirm the app is running. Observe the app before opening it again.")
  }
  if action=="search_browser"{
   guard let query=args["query"] as? String,!query.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,query.utf8.count<=2000 else{throw ToolError("Browser search needs a query up to 2,000 bytes.")}

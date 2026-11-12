@@ -1231,7 +1231,7 @@ async function openSetup(firstOnly=false){
   const state=await invoke('setup_state');
   if(firstOnly&&state.complete)return;
   document.querySelector('.app').classList.toggle('onboarding', !state.complete);
-  $('setup-title').textContent = state.complete ? 'Access & local models' : 'Set up fabric-memory';
+  $('setup-title').textContent = state.complete ? 'Access & local models' : 'Set up Fabric Memory';
   $('setup-save').textContent = state.complete ? 'Save' : 'Continue';
   $('setup-close').hidden = !state.complete;
   setupModels(state,state.model);

@@ -17,6 +17,8 @@ mod generation;
 mod mcp;
 mod local_beacon;
 mod model_config;
+#[cfg(target_os = "macos")]
+mod notifications;
 mod privacy;
 mod qr;
 mod recall;
@@ -80,6 +82,7 @@ fn main() {
             }
             #[cfg(target_os = "macos")]
             {
+                notifications::request_permission();
                 use tauri::menu::{Menu, MenuItem};
                 let status = MenuItem::with_id(app, "screen_control_status", "Screen idle", false, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&status])?;
@@ -87,7 +90,7 @@ fn main() {
                 let tray = tauri::tray::TrayIconBuilder::with_id("memory-fabric")
                     .menu(&menu)
                     .icon(icon)
-                    .tooltip("fabric-memory: screen idle")
+                    .tooltip("Fabric Memory: screen idle")
                     .build(app)?;
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -97,7 +100,7 @@ fn main() {
                             .is_some_and(|backend| backend.screen_active());
                         if current != active {
                             active = current;
-                            let tooltip = if active { "fabric-memory: controlling the screen" } else { "fabric-memory: screen idle" };
+                            let tooltip = if active { "Fabric Memory: controlling the screen" } else { "Fabric Memory: screen idle" };
                             let _ = tray.set_tooltip(Some(tooltip));
                             let _ = status.set_text(if active { "Controlling the screen" } else { "Screen idle" });
                         }

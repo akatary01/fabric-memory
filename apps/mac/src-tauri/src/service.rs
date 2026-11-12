@@ -30,14 +30,9 @@ pub async fn app_command(
         #[cfg(target_os = "macos")]
         if command == "send_prompt" && !app.get_webview_window("main")
             .is_some_and(|window| window.is_focused().unwrap_or(false)) {
-            let title = result.as_ref().ok().and_then(|answer| answer["conversation_title"].as_str())
-                .unwrap_or("fabric-memory");
-            let message = if result.as_ref().is_ok_and(|answer| answer["failure"].is_null()) {
-                "Task complete"
-            } else { "Task ended. Open Fabric for details." };
-            let _ = std::process::Command::new("/usr/bin/osascript")
-                .args(["-e", "on run argv", "-e", "display notification (item 1 of argv) with title \"fabric-memory\" subtitle (item 2 of argv)", "-e", "end run", "--", message, title])
-                .status();
+            crate::notifications::complete(
+                result.as_ref().is_ok_and(|answer| answer["failure"].is_null()),
+            );
         }
         result
     })

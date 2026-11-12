@@ -158,7 +158,7 @@ def package(root,output,identity=None,notary_profile=None):
         run('lipo','-create',*helpers,'-output',macos/'fabric-computer-use')
         shutil.copy2(root/'apps/mac/icons/FabricMemory.icns',resources/'FabricMemory.icns')
         info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac',
-              'CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns',
+              'CFBundleName':'Fabric Memory','CFBundleDisplayName':'Fabric Memory','CFBundleIconFile':'FabricMemory.icns',
               'CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2',
               'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','LSMinimumSystemVersion':'14.0',
               'NSMicrophoneUsageDescription':'Record microphone audio when you request a screen recording.','NSAudioCaptureUsageDescription':'Record system audio when you request a screen recording.','NSAppleEventsUsageDescription':'Control the Mac apps you choose for agent tasks.'}

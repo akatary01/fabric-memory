@@ -665,8 +665,20 @@ Documents (JSON): {}",
                             run.agent.check()?;
                             if crate::routing::visual_request(&prompt) { return Ok(draft); }
                             run.agent.step("answering","Checking the reply against the request and evidence…",serde_json::json!({"phase":"verification"}));
-                            let answer = crate::verification::check_reply(
-                                &prompt, draft["text"].as_str().unwrap_or(""), &context, &sources, &full_history, &[])?;
+                            let answer = match crate::verification::check_reply(
+                                &prompt, draft["text"].as_str().unwrap_or(""), &context, &sources, &full_history, &[],
+                            ) {
+                                Err(error) if computer_task && error == "The local verification model returned an invalid result." => {
+                                    let completed = receipts.as_array().into_iter().flatten()
+                                        .filter(|step| step["kind"] == "done" && step["tool"] == "computer")
+                                        .filter_map(|step| step["summary"].as_str())
+                                        .map(|summary| format!("- {}", summary.trim_end_matches('…')))
+                                        .collect::<Vec<_>>().join("\n");
+                                    if completed.is_empty() { return Err(error); }
+                                    return Err(format!("I couldn't verify the full outcome. Fabric recorded these completed actions:\n\n{completed}\n\nOpen Task activity to see their results."));
+                                }
+                                result => result?,
+                            };
                             draft["text"] = serde_json::json!(answer);
                             Ok(draft)
                         });
