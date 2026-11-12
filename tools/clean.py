@@ -37,7 +37,7 @@ def trash(path):
     return str(destination)
 
 def clean(project,support,dry_run=False):
-    candidates=[project/'target',project/'.build/mac',project/'apps/iphone/.build',project/'node_modules',support/'Build/iOS',support/'Build/Swift']
+    candidates=[project/'target',project/'.build/mac',project/'node_modules',support/'Build/Swift']
     # If inspection is unavailable, leave everything untouched.
     if not shutil.which('lsof'):raise ValueError('Install lsof to check which build files are in use before cleaning')
     check=subprocess.run(['lsof','-nP','-F','n'],capture_output=True,text=True)

@@ -52,7 +52,7 @@ impl Client {
             .timeout(std::time::Duration::from_secs(100))
             .build()
             .map_err(|_| "Cannot initialize sync client")?;
-        // The desktop uses loopback; the paired iPhone uses the Mac's .local name.
+        // The desktop uses loopback; paired devices use the Mac's .local name.
         Ok(Self {
             http,
             base: base.trim_end_matches('/').into(),

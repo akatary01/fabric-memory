@@ -1,6 +1,6 @@
 # Memory Fabric
 
-A local-first AI workspace for Mac and iPhone, with shared memory through your own Memory beacon.
+A local-first AI workspace for Mac, with shared memory through your own Memory beacon.
 
 ## Features
 
@@ -9,7 +9,6 @@ A local-first AI workspace for Mac and iPhone, with shared memory through your o
 - MCP connections and built-in Mac computer use
 - Configurable models, project agent instructions, and complexity-based cloud selection
 - Agent-classified public and private memories
-- Independent on-device iPhone chat
 - Automatic memory sync, QR pairing, and one-click local beacon
 - Inline HTML mockups and six paper themes
 - Separate app, Memory beacon, and cleanup commands
@@ -22,7 +21,7 @@ Open the disk image, drag **Memory Fabric** to Applications, and launch it. Loca
 
 ## Develop
 
-Requires Python 3.10+, Rust, and Xcode Command Line Tools. iPhone development also requires Node.js and Xcode.
+Requires Python 3.10+, Rust, and Xcode Command Line Tools. Install uv to prepare local model assets.
 
 ```sh
 ./bin/fabric-memory install
@@ -30,8 +29,6 @@ fabric-memory run
 ```
 
 The first build compiles the native Mac app. On a fresh checkout, use `fabric-memory run --prepare` to download and prepare the models first.
-
-For iPhone, run `fabric-memory run --phone`, then build or archive in Xcode.
 
 ## Memory beacon
 
@@ -41,7 +38,7 @@ fabric-memory launch-git --url https://akatary.com/fabric-git
 
 Or choose **Devices & sync → Deploy local memory beacon** to host on your Mac while the app is open.
 
-Run the command on your server behind HTTPS. It starts only the Memory beacon and prints a compact text QR in the terminal. Enter its URL in the apps, or scan the QR on your phone. The default cloud address is not deployed automatically.
+Run the command on your server behind HTTPS. It starts only the Memory beacon and prints a compact text QR in the terminal. Enter its URL and invitation code in the Mac app. The default cloud address is not deployed automatically.
 
 A printable address QR identifies a future room hub; a current invitation is still required to join.
 

@@ -22,7 +22,7 @@ pub struct Backend {
     mcp: crate::mcp::Host,
     local_beacon: crate::local_beacon::Host,
     encoder: Mutex<Encoder>,
-    adapter: Adapter,
+    adapter: Option<Adapter>,
     sync_config: PathBuf,
     syncing: Mutex<()>,
     pub sync_wake: crate::sync::Wake,
@@ -71,8 +71,14 @@ impl Backend {
             &encoder.manifest.space,
             encoder.manifest.dimension,
         )?;
-        let adapter = Adapter::load(&assets.join("adapters/phone-to-mac"))?;
-        if adapter.manifest.target != encoder.manifest.space {
+        // Retain compatibility with saved foreign embedding projections.
+        let adapters = assets.join("adapters");
+        let adapter = ["foreign-to-mac", "phone-to-mac"].iter()
+            .map(|name| adapters.join(name))
+            .find(|path| path.is_dir())
+            .map(|path| Adapter::load(&path))
+            .transpose()?;
+        if adapter.as_ref().is_some_and(|adapter| adapter.manifest.target != encoder.manifest.space) {
             return Err("adapter does not match Mac encoder".into());
         }
         let conversation_path = data.join("mac-conversations.json");
@@ -914,7 +920,7 @@ Documents (JSON): {}",
                 .ledger
                 .lock()
                 .map_err(failed)?
-                .ingest(&events, Some(&self.adapter))
+                .ingest(&events, self.adapter.as_ref())
                 .map_err(failed)?;
             commit = page["commit"].as_str().map(String::from);
             after = page["next_after"].as_str().map(String::from);
@@ -1229,7 +1235,7 @@ impl Backend {
                     .ledger
                     .lock()
                     .map_err(failed)?
-                    .ingest(&events, Some(&self.adapter))
+                    .ingest(&events, self.adapter.as_ref())
                     .map_err(failed)?;
                 self.sync_wake.request();
                 Ok(json!(count))

@@ -97,7 +97,11 @@ def package(root,output,identity=None,notary_profile=None):
         assets=resources/'assets/mac';assets.mkdir(parents=True)
         for name in ['model.onnx','encoder.json','tokenizer.json','LICENSE','README.md']:
             shutil.copy2(root/'assets/mac'/name,assets/name)
-        shutil.copytree(root/'assets/adapters/phone-to-mac',resources/'assets/adapters/phone-to-mac')
+        for name in ('foreign-to-mac', 'phone-to-mac'):
+            adapter = root/'assets/adapters'/name
+            if adapter.is_dir():
+                shutil.copytree(adapter, resources/'assets/adapters/foreign-to-mac')
+                break
         seed_models(support()/'LocalLLM/models',resources/'models',notices)
         from local_llm import VERSION as ollama_version, SHA256 as ollama_sha
         ollama_archive=support()/('LocalLLM/ollama-v'+ollama_version+'.tgz')

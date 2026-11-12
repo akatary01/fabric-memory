@@ -19,8 +19,6 @@
 **/.build/
 **/dist/
 **/node_modules/
-/apps/iphone/DemoAssets/
-/apps/iphone/FabricPhone.xcodeproj/
 /apps/mac/src-tauri/gen/
 **/xcuserdata/
 *.xcarchive/
@@ -39,5 +37,4 @@ __pycache__/
 # Keep only reviewed, non-personal verification reports
 /reports/*
 !/reports/README.md
-!/reports/automatic-sync.json
 !/reports/mac-routing-web.json

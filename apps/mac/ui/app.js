@@ -173,7 +173,7 @@ function render(memories) {
   $('clear-search').hidden = !searchActive;
   if (!memories.length) {
     list.append(empty(searchActive ? 'No memories to search yet' : 'Make room for your first memory',
-      searchActive ? 'Save a note or import memories from your iPhone.' : 'Add a note above. You can find it later using your own words.'));
+      searchActive ? 'Save a note or import a memory export.' : 'Add a note above. You can find it later using your own words.'));
     return;
   }
   const details = new Map(allMemories.map(memory => [memory.memory, memory]));
@@ -182,7 +182,7 @@ function render(memories) {
     const card = document.createElement('article'); card.className = 'memory-card';card.dataset.memoryId=memory.memory;
     const top = document.createElement('div'); top.className = 'memory-top';
     const badge = document.createElement('span'); badge.className = info.translated ? 'badge translated' : 'badge';
-    badge.textContent = info.translated ? 'MiniLM → MPNet · translated' : 'MPNet · native';
+    badge.textContent = info.translated ? 'Translated embedding' : 'MPNet · native';
     top.append(badge);
     const recordedAt = info.recorded_at ?? memory.recorded_at;
     const date = new Date(Number(recordedAt) * 1000);
@@ -572,7 +572,7 @@ function renderContext(){
     const row=document.createElement('div');row.className='context-memory';
     const plain=document.createElement('div');plain.innerHTML=DOMPurify.sanitize(marked.parse(memory.text));const text=plain.textContent.trim();
     const p=document.createElement('p');p.textContent=text.length>140?text.slice(0,137)+'…':text;
-    const source=document.createElement('small');source.textContent=memory.translated?'Synced · MiniLM → MPNet':'Saved on this Mac · MPNet';
+    const source=document.createElement('small');source.textContent=memory.translated?'Synced · Translated embedding':'Saved on this Mac · MPNet';
     row.append(p,source);list.append(row);
   });
 }

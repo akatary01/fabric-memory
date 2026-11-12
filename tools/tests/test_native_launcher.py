@@ -11,7 +11,7 @@ class NativeLauncherTests(unittest.TestCase):
             main(root)
         calls=[c.args[0] for c in run.call_args_list]
         launch.assert_called_once_with(app,{'FABRIC_DATA_DIR':'/test/data'})
-        self.assertFalse(any('sync/setup.py' in ' '.join(c) or 'launch-git' in c for c in calls))
+        self.assertFalse(any('launch-git' in c for c in calls))
 
     def test_current_applications_bundle_is_reused(self):
         app=Path('/Applications/Memory Fabric.app')

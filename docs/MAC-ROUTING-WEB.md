@@ -2,7 +2,6 @@
 
 Run `fabric-memory run`. The launcher prepares the existing local LFM3 runtime and a
 private SearXNG installation once, then builds and opens the Tauri app.
-The iPhone continues answering independently with its own model.
 
 ## Answer mode
 

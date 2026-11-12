@@ -14,7 +14,6 @@ open-source runtime and embedding models.
 | Marked (Markdown renderer) | MIT | https://github.com/markedjs/marked |
 | DOMPurify (HTML sanitizer) | Apache-2.0 OR MPL-2.0 | https://github.com/cure53/DOMPurify |
 | Tauri | MIT OR Apache-2.0 | https://github.com/tauri-apps/tauri |
-| llama.cpp (native iPhone runtime) | MIT | https://github.com/ggml-org/llama.cpp |
 | Ollama runtime | MIT | https://github.com/ollama/ollama |
 | LFM3-1.7B generation model | LFM Open License v1.0; commercial-use restrictions | https://huggingface.co/LiquidAI/LFM3-1.7B/blob/main/LICENSE |
 | Rust | MIT OR Apache-2.0 | https://github.com/rust-lang/rust |
@@ -26,7 +25,6 @@ open-source runtime and embedding models.
 | Hugging Face tokenizers | Apache-2.0 | https://github.com/huggingface/tokenizers |
 | NumPy | BSD-3-Clause | https://github.com/numpy/numpy |
 | Apache Arrow / PyArrow | Apache-2.0 | https://github.com/apache/arrow |
-| all-MiniLM-L6-v2 | Apache-2.0 | https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2 |
 | all-mpnet-base-v2 | Apache-2.0 | https://huggingface.co/sentence-transformers/all-mpnet-base-v2 |
 | WikiText / Wikipedia text | CC-BY-SA-3.0 / GFDL as declared by upstream | https://huggingface.co/datasets/Salesforce/wikitext |
 

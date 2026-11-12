@@ -21,4 +21,4 @@ State what completed and which checks passed. Preserve partial changes on failur
 
 ## Guide index
 
-README.md: getting started and commands. AGENTS.md: repository instructions. docs/AGENT.md: models, tools, permissions and privacy. docs/ARCHITECTURE.md: components. docs/BEACON.md and docs/SYNC.md: pairing and sync. docs/DISTRIBUTION.md: standalone Mac packaging. docs/LOCAL-LLM.md and docs/MAC-ROUTING-WEB.md: local models and routing. docs/PHONE-LOCAL-LLM.md and docs/TESTFLIGHT.md: iPhone development and distribution.
+README.md: getting started and commands. AGENTS.md: repository instructions. docs/AGENT.md: models, tools, permissions and privacy. docs/ARCHITECTURE.md: components. docs/BEACON.md and docs/SYNC.md: pairing and sync. docs/DISTRIBUTION.md: standalone Mac packaging. docs/LOCAL-LLM.md and docs/MAC-ROUTING-WEB.md: local models and routing.

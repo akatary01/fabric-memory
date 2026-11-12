@@ -13,7 +13,7 @@ class CleanTests(unittest.TestCase):
     def test_preview_preserves_models_and_skips_open_builds(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/'project';support=Path(d)/'support'
-            for p in [root/'target',root/'.build/mac',root/'assets',root/'.venv',root/'apps/iphone/dist',support/'Bin',support/'Sync']:
+            for p in [root/'target',root/'.build/mac',root/'assets',root/'.venv',support/'Bin',support/'Sync']:
                 p.mkdir(parents=True);(p/'keep').write_text('data')
             result=type('Result',(),{'returncode':0,'stdout':'n'+str(root/'target/keep')+'\n'})()
             with patch('clean.subprocess.run',return_value=result),patch('clean.trash') as trash:
