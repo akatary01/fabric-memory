@@ -93,7 +93,7 @@ function renderConversation(turns) {
       details.append(title, list);
       row.append(details);
     }
-    if(turn.steps?.some(step=>step.agent)){const team=document.createElement('button');team.className='text-button';team.textContent='Agent structure';team.addEventListener('click',()=>{selectedAgentTurn=index;showContextTab('agent-structure');});row.append(team);}
+    if(turn.role==='assistant' && (turn.model || turn.steps?.some(step=>step.agent))){const team=document.createElement('button');team.className='text-button';team.textContent='Agent structure';team.addEventListener('click',()=>{selectedAgentTurn=index;showContextTab('agent-structure');});row.append(team);}
     const copyBar = document.createElement('div');
     copyBar.className = 'message-output-actions';
     copyBar.append(window.FabricChat.copyButton(row.dataset.messageText, turn.role === 'user' ? 'Copy message' : 'Copy reply'));
@@ -435,6 +435,8 @@ async function runPrompt(text, mode, web, files=[], chatId=conversationState.id)
   if (conversationState.id === chatId) {
     chatBusy = true;
     selectedAgentTurn=null;
+    taskState={running:true,steps:[]};
+    renderAgentTree();
     renderConversation([...conversationState.turns, {role:'user',content:text,attachments:run.attachments}]);
     $('generation-status').hidden = true;
     $('task-panel').hidden = false;
@@ -593,7 +595,11 @@ $('cycle-paper').addEventListener('click',()=>{
   try{localStorage.setItem('fabric-paper',name);}catch{}
 });
 $('toggle-context').addEventListener('click',()=>{
-  const hidden=document.querySelector('.app').classList.toggle('no-context');$('toggle-context').setAttribute('aria-pressed',String(!hidden));
+  const app = document.querySelector('.app');
+  const hidden = getComputedStyle(document.querySelector('.context-panel')).display !== 'none';
+  app.classList.toggle('no-context', hidden);
+  app.classList.toggle('context-open', !hidden);
+  $('toggle-context').setAttribute('aria-pressed', String(!hidden));
 });
 function renderContext(){
   const last=conversationState.turns.filter(turn=>turn.role==='assistant').at(-1);
@@ -1076,7 +1082,10 @@ function showContextTab(panel) {
     $(id + '-tab').setAttribute('aria-selected', String(id === panel));
     $(id).hidden = id !== panel;
   }
-  if ($('toggle-context').getAttribute('aria-pressed') === 'false') $('toggle-context').click();
+  const app = document.querySelector('.app');
+  app.classList.remove('no-context');
+  app.classList.add('context-open');
+  $('toggle-context').setAttribute('aria-pressed', 'true');
   renderAgentTree();
 }
 $('context-overview-tab').addEventListener('click', () => showContextTab('context-overview'));
@@ -1086,10 +1095,17 @@ $('agent-structure-tab').addEventListener('click', () => {
 });
 function renderAgentTree(){
   const saved=selectedAgentTurn===null?conversationState.turns?.findLast(turn=>turn.role==='assistant'):conversationState.turns?.[selectedAgentTurn];
-  const live=chatBusy && taskState.running && selectedAgentTurn===null;
+  const live=chatBusy && selectedAgentTurn===null;
   const records=live?taskState.steps:saved?.steps;
   const nodes=new Map();
   for(const step of records||[]) if(step.agent?.id) nodes.set(step.agent.id,step.agent);
+  if (!live && !nodes.size && saved?.model) {
+    nodes.set('main', {id:'main', model:saved.model, provider:saved.provider, state:saved.failure?'failed':'done'});
+  } else if (!live && saved?.provider === 'cloud' && saved.model && nodes.has('main') &&
+      ![...nodes.values()].some(node => node.provider === 'cloud' && node.role === 'Answer generation')) {
+    nodes.set('cloud-answer', {id:'cloud-answer', parent:'main', role:'Answer generation',
+      model:saved.model, provider:'cloud', state:saved.failure?'failed':'done'});
+  }
   if(!live && nodes.has('main')) {
     const main=nodes.get('main');
     nodes.set('main',{...main,state:saved?.failure?'failed':main.state==='running'?'done':main.state});
@@ -1101,11 +1117,17 @@ function renderAgentTree(){
     list.className='agent-branch';
     if(depth>3)return list;
     for(const agent of nodes.values()){
-      if((agent.parent||null)!==parent)continue;
+      const recordedParent = nodes.has(agent.parent) && agent.parent !== agent.id ? agent.parent : null;
+      if(recordedParent!==parent)continue;
       const node=document.createElement('li'), title=document.createElement('strong'), info=document.createElement('small');
-      title.textContent=agent.id==='main'?'Main agent':`Sub-agent ${agent.id.replace(/^(local|cloud)-/,'')}`;
-      info.textContent=[agent.model,agent.provider==='cloud'?'Cloud':'This Mac',({running:'Running',done:'Complete',failed:'Failed',stopped:'Stopped',superseded:'Superseded'})[agent.state]].filter(Boolean).join(' · ');
+      title.textContent=agent.id==='main'?'Main agent':agent.role || `Sub-agent ${agent.id.replace(/^(local|cloud)-/,'')}`;
+      info.textContent=[agent.id==='main' ? agent.role : null,agent.model,agent.provider==='cloud'?'Cloud':'This Mac',({running:'Running',done:'Complete',failed:'Failed',stopped:'Stopped',superseded:'Superseded'})[agent.state]].filter(Boolean).join(' · ');
       node.append(title,info);
+      if (agent.objective) {
+        const objective = document.createElement('small');
+        objective.textContent = agent.objective;
+        node.append(objective);
+      }
       const children=branch(agent.id,depth+1);
       if(children.childNodes.length)node.append(children);
       list.append(node);
@@ -1113,6 +1135,12 @@ function renderAgentTree(){
     return list;
   };
   tree.replaceChildren(branch(null,0));
+  if (!live && nodes.size === 1) {
+    const note = document.createElement('p');
+    note.className = 'chat-hint';
+    note.textContent = 'No delegation recorded for this reply.';
+    tree.append(note);
+  }
 }
 
 function showPermissionState(computer){

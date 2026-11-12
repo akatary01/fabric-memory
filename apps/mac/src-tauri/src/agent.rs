@@ -180,8 +180,13 @@ impl Runner {
             t.steps.push(v);
         }
     }
-    pub fn agent_node(&self, id: &str, parent: Option<&str>, model: &str, state: &str) {
-        self.step("agent", "Agent structure updated", json!({"agent":{"id":id,"parent":parent,"model":model,"state":state,"provider":if id.starts_with("cloud-") {"cloud"} else {"local"}}}));
+    pub fn agent_node(&self, id: &str, parent: Option<&str>, model: &str, state: &str, role: &str, objective: Option<&str>) {
+        let objective = objective.map(|text| text.chars().take(180).collect::<String>());
+        let provider = if id.starts_with("cloud-") { "cloud" } else { "local" };
+        self.step("agent", "Agent structure updated", json!({
+            "agent":{"id":id,"parent":parent,"model":model,"state":state,"provider":provider,
+                "role":role,"objective":objective}
+        }));
     }
     pub fn status(&self) -> Value {
         let t = self.task.lock().unwrap();

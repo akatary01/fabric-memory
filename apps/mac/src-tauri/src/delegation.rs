@@ -39,11 +39,11 @@ impl Team {
         if runner.revised(revision) { return Err("The request changed. Cloud advice was skipped.".into()); }
         runner.step("done", &reason, json!({"phase":"model_selection","model":model}));
         let id = format!("cloud-{}", slot + 1);
-        runner.agent_node(&id, Some("main"), &model, "running");
+        runner.agent_node(&id, Some("main"), &model, "running", "Research advice", None);
         let result = crate::cloud::advise(task, &model);
         let superseded = runner.check().is_err() || runner.revised(revision);
         let state = if superseded { "superseded" } else if result.is_ok() { "done" } else { "failed" };
-        runner.agent_node(&id, Some("main"), &model, state);
+        runner.agent_node(&id, Some("main"), &model, state, "Research advice", None);
         if superseded { return Err("Parent task changed or stopped.".into()); }
         result.map(|answer| json!({"advice": [{"id":id,"model":model,"advice":answer.chars().take(4000).collect::<String>()}]}))
     }
@@ -65,7 +65,7 @@ impl Team {
                 if runner.check().is_err() || runner.revised(revision) { return json!({"error":"Parent task changed or stopped."}); }
                 let Ok(slot) = self.next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < LIMIT).then_some(n + 1)) else { return json!({"error":"The local team used its four-agent budget."}); };
                 let id = format!("local-{}", slot + 1);
-                runner.agent_node(&id, Some(parent), model, "running");
+                runner.agent_node(&id, Some(parent), model, "running", "Local advice", Some(task));
                 let ask = |context: &str, allow_children: bool| {
                     let mut schema = json!({"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}});
                     if allow_children { schema["properties"]["delegate"] = self.schema(); }
@@ -85,7 +85,7 @@ impl Team {
                 });
                 let cancelled = runner.check().is_err() || runner.revised(revision);
                 let answer = result.as_ref().ok().and_then(|v| v["answer"].as_str()).filter(|s| !s.trim().is_empty());
-                runner.agent_node(&id, Some(parent), model, if cancelled {"superseded"} else if answer.is_some() {"done"} else {"failed"});
+                runner.agent_node(&id, Some(parent), model, if cancelled {"superseded"} else if answer.is_some() {"done"} else {"failed"}, "Local advice", Some(task));
                 if cancelled { return json!({"id":id,"error":"Parent task changed or stopped."}); }
                 match answer {
                     Some(answer) => json!({"id":id,"model":model,"advice":answer.chars().take(2400).collect::<String>()}),

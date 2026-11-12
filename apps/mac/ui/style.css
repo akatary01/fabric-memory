@@ -136,3 +136,11 @@ button:not(.primary):focus-visible{background:var(--soft)}
 .app.onboarding .sidebar,.app.onboarding .content-topbar,.app.onboarding footer,.app.onboarding .titlebar-tools,.app.onboarding #beacon-warning{display:none}
 .app.onboarding .workspace{grid-column:1/-1;grid-row:2/-1}
 .app.onboarding .titlebar .wordmark{grid-column:2}
+
+@media(max-width:900px){
+  .app.context-open:not(.settings-view) .context-panel{
+    display:block;position:absolute;inset:41px 0 0 auto;width:min(280px,100%);
+    z-index:3;background:var(--paper);box-shadow:-6px 0 14px #0002;
+  }
+  .workspace{position:relative}
+}

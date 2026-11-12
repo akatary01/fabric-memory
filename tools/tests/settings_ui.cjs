@@ -86,6 +86,20 @@ for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','m
  finishPrompt({});await tick();
  savedTurns=[];
 
+ savedTurns=[{role:'assistant',content:'Finished',model:'cloud-test',provider:'cloud',steps:[
+   {agent:{id:'main',model:'local-test',provider:'local',state:'done'}},
+   {agent:{id:'local-1',parent:'main',role:'Local advice',objective:'Review the plan',model:'local-test',provider:'local',state:'done'}},
+   {agent:{id:'local-2',parent:'local-1',role:'Local advice',model:'local-test',provider:'local',state:'failed'}},
+ ]}];
+ await w.loadConversation();
+ $('agent-structure-tab').click();
+ const tree=$('agent-tree');
+ assert.match(tree.querySelector('ul > li > ul > li > ul > li').textContent,/Failed/);
+ assert.match(tree.textContent,/Review the plan/);
+ assert.match(tree.textContent,/Answer generation.*cloud-test/);
+ $('context-overview-tab').click();
+ savedTurns=[];
+
  await w.loadDeviceUsage();
  assert($('local-device-usage').textContent.includes('CPU 33%'));
  assert($('context-device-usage').textContent.includes('CPU 33%'));

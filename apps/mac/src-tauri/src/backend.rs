@@ -162,7 +162,7 @@ impl Backend {
     fn answer_attachments(&self, run: &ConversationRun, id: &str, text:&str, files:&crate::attachments::Attachments) -> Result<serde_json::Value,String> {
         use serde_json::json;
         let model=crate::generation::model();
-        run.agent.agent_node("main",None,&model,"running");
+        run.agent.agent_node("main", None, &model, "running", "Attachment analysis", None);
         if !files.images.is_empty() && !crate::model_config::supports_vision(){
             return Err("The selected local model cannot read images. Choose LFM3-VL or another vision model in Settings → Access & local models, then send the attachments again.".into());
         }
@@ -319,6 +319,7 @@ Documents (JSON): {}",
         if text.trim().is_empty() || text.len() > 4000 {
             return Err("Enter a prompt of 1–4,000 bytes.".into());
         }
+        run.agent.agent_node("main", None, &crate::generation::model(), "running", "Task coordination", None);
         run.agent.step("running","Checking request…",serde_json::json!({"phase":"privacy"}));
         let routing_history = self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
         let clarified = crate::routing::clarification_reply(&text, &routing_history);
@@ -420,7 +421,6 @@ Documents (JSON): {}",
         if workspace_enabled && local_control {
             tools.extend(crate::workspace::tools());
         }
-        run.agent.agent_node("main", None, &crate::generation::model(), "running");
         let recent = crate::generation::conversation_context(&routing_history).iter()
             .map(|turn| serde_json::json!({"role":turn["role"],"content":turn["content"]}))
             .collect::<Vec<_>>();
@@ -563,7 +563,12 @@ Documents (JSON): {}",
                 run.agent.check()?;
                 decision.reason = format!("{model} · {reason}");
                 run.agent.step("done", &decision.reason, serde_json::json!({"phase":"model_selection"}));
-                crate::cloud::answer_model_guided(request, "", &[], false, &model, &bundled_guide)
+                run.agent.agent_node("cloud-answer", Some("main"), &model, "running", "Answer generation", None);
+                let result = crate::cloud::answer_model_guided(request, "", &[], false, &model, &bundled_guide);
+                let state = if run.agent.check().is_err() { "stopped" } else if result.is_ok() { "done" } else { "failed" };
+                let actual_model = result.as_ref().ok().and_then(|answer| answer["model"].as_str()).unwrap_or(&model);
+                run.agent.agent_node("cloud-answer", Some("main"), actual_model, state, "Answer generation", None);
+                result
             });
             run.agent.check()?;
             match result {
