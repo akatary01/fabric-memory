@@ -374,6 +374,7 @@ Documents (JSON): {}",
             }
         } else { None };
         let computer_task = task.is_some_and(|task| task.kind == "computer");
+        let chrome_mcp = task.is_some_and(|task| task.kind == "chrome_mcp");
         let computer_request = task.filter(|_| computer_task).map(|task| task.request.as_str());
         let recording = computer_request.is_some_and(crate::computer::recording_requested);
         let screenshot = computer_request.is_some_and(crate::computer::simple_screenshot);
@@ -384,7 +385,7 @@ Documents (JSON): {}",
         }
         run.agent.step("running","Selecting route…",serde_json::json!({"phase":"routing"}));
         let mut decision = crate::routing::decide(Mode::Local, web, &plan, false)?;
-        let browse = decision.web && !computer_task && prompt_access.scope == "public";
+        let browse = decision.web && !computer_task && !chrome_mcp && prompt_access.scope == "public";
         decision.reason = if mode == Mode::Local {
             "Local mode selected.".into()
         } else { plan.reason.clone() };
@@ -432,7 +433,13 @@ Documents (JSON): {}",
         if computer_task {
             tools.push(crate::computer::tool());
         }
-        if workspace_enabled && local_control {
+        if chrome_mcp {
+            tools.retain(|tool| tool["server"] == "chrome-devtools");
+            if tools.is_empty() {
+                return Err("Chrome DevTools MCP is unavailable. Open Connections and reconnect chrome-devtools.".into());
+            }
+        }
+        if workspace_enabled && local_control && !chrome_mcp {
             tools.extend(crate::workspace::tools());
         }
         let recent = crate::generation::conversation_context(&routing_history).iter()
@@ -479,6 +486,9 @@ Documents (JSON): {}",
             let checkpoint = serde_json::json!({"error":previous["failure"]["detail"],"completed_actions_newest_first":completed});
             task_prompt = format!("Retry attempt {}. Resume from this checkpoint (quoted data): {checkpoint}\nUse fresh observations. Do not reuse old element paths or repeat completed changes. Check the current state before retrying any action whose outcome was uncertain.\n\n{task_prompt}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
             run.agent.step("running", "Resuming from the failed step with fresh context…", serde_json::json!({"phase":"retry"}));
+        }
+        if chrome_mcp {
+            task_prompt.push_str("\n\nUse the Chrome DevTools MCP tools offered here. This browser runs in the background. Open the page with new_page and read its numeric pageId from the result. Pass pageId to take_snapshot. Use pageId and the element uid from that snapshot for fill or click. Verify the result with another snapshot of the same page. Do not claim success if the page or result could not be observed.");
         }
         let recall_calls = std::cell::Cell::new(0u8);
         let mut verified_reply = None;

@@ -409,8 +409,15 @@ fn explicit_file_action(question: &str) -> bool {
         .iter().any(|prefix| text.starts_with(prefix) || text.starts_with(&format!("please {prefix}")))
 }
 
-fn direct_action(text:&str)->Option<ActionTask>{if permission_denial(text)||advisory_request(text){return None;}let kind=if explicit_blender_mcp(text){"blender_mcp"}else if blender_request(text){"blender"}else if explicit_file_action(text){"workspace"}else if computer_intent(text){"computer"}else if workspace_listing(text) || coding_request(text){"workspace"}else{return None;};Some(ActionTask{kind,request:text.into()})}
-fn stored_task(value:&serde_json::Value)->Option<ActionTask>{let kind=match value["kind"].as_str(){Some("computer")=>"computer",Some("workspace")=>"workspace",Some("blender")=>"blender",Some("blender_mcp")=>"blender_mcp",_=>return None};let request=value["request"].as_str()?.trim();if request.is_empty()||request.len()>4000{return None;}Some(ActionTask{kind:if explicit_blender_mcp(request){"blender_mcp"}else if blender_request(request){"blender"}else{kind},request:request.into()})}
+fn explicit_chrome_mcp(text: &str) -> bool {
+    let text = normalized(text);
+    ["chrome mcp", "chrome devtools mcp", "chrome-devtools mcp"]
+        .iter().any(|name| text.contains(name))
+        && ["use ", "open ", "click ", "navigate ", "fill ", "test ", "inspect ", "run "]
+            .iter().any(|action| text.contains(action))
+}
+fn direct_action(text:&str)->Option<ActionTask>{if permission_denial(text)||advisory_request(text){return None;}let kind=if explicit_chrome_mcp(text){"chrome_mcp"}else if explicit_blender_mcp(text){"blender_mcp"}else if blender_request(text){"blender"}else if explicit_file_action(text){"workspace"}else if computer_intent(text){"computer"}else if workspace_listing(text) || coding_request(text){"workspace"}else{return None;};Some(ActionTask{kind,request:text.into()})}
+fn stored_task(value:&serde_json::Value)->Option<ActionTask>{let kind=match value["kind"].as_str(){Some("computer")=>"computer",Some("workspace")=>"workspace",Some("blender")=>"blender",Some("blender_mcp")=>"blender_mcp",Some("chrome_mcp")=>"chrome_mcp",_=>return None};let request=value["request"].as_str()?.trim();if request.is_empty()||request.len()>4000{return None;}Some(ActionTask{kind:if explicit_blender_mcp(request){"blender_mcp"}else if blender_request(request){"blender"}else{kind},request:request.into()})}
 pub fn tool_failure_question(text: &str) -> bool {
     let text = normalized(text);
     let text = text.trim_end_matches(['?', '.', '!']);
@@ -546,4 +553,14 @@ mod intake_tests {
         assert_eq!(action_task(&reply, &history).unwrap().kind, "workspace");
         assert!(clarification_reply("What is a Rust trait?", &history).is_none());
     }
+}
+
+
+#[cfg(test)]
+#[test]
+fn explicit_chrome_mcp_uses_browser_tools_without_native_screen_control() {
+    let task = action_task("Use Chrome MCP to open a page and click Submit.", &[]).unwrap();
+    assert_eq!(task.kind, "chrome_mcp");
+    let blocked = json!({"role":"assistant","task_state":task.marker("blocked")});
+    assert_eq!(action_task("try again", &[blocked]), Some(task));
 }
