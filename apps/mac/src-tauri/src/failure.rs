@@ -10,10 +10,14 @@ pub fn report(error:&str,steps:&Value)->Value{
  ("The agent repeated an action without making progress.",if lower.contains("blender"){"The local model repeated a Blender operation without completing the requested edit. This is a planning stall, not evidence that your file path or permissions are wrong. The saved partial file is retained; retry continues from it. Control stays local."}else{"I stopped the repetition. Check the last operation below and provide any missing details; completed changes are retained."},true,true)
  }else if lower.contains("unavailable tool") || lower.contains("could not repair the tool call") {
  ("The local planner could not produce a valid tool call.","Open Task activity to see what it tried. Say “Try again” to resume the original task.",false,false)
+ }else if crate::computer::is_permission_block(error) {
+ ("macOS blocked computer input.","Open Connections → macOS access and check Fabric Memory’s permissions. After changing access, quit and reopen Fabric Memory, then retry.",false,false)
  }else if lower.contains("computer")||lower.contains("accessibility")||lower.contains("screen recording") {
  ("The requested computer action did not finish.","Check the detail below. You can open Connections to check Computer use and macOS access, tell me the browser or app name, or change the local model in Settings → General. Then I can continue from the last confirmed state.",false,false)
  }else if lower.contains("private") {
  ("This request was kept on this device by the privacy settings.","Choose Local to continue privately, or remove the private details before using cloud or web access. What would you prefer?",false,true)
+ }else if lower.starts_with("local ollama") || lower.starts_with("could not connect to the local ollama server") {
+ ("Local Ollama could not complete the request.","Check the local runtime and the selected model in Settings → Access & local models, then retry.",false,false)
  }else if lower.contains("401")||lower.contains("403")||lower.contains("token")||lower.contains("keychain"){
  ("The cloud provider could not authorize this request.","Check the provider token and model access in Settings → Cloud, or choose Local. Tell me when you have updated it.",true,true)
  }else if lower.contains("429"){
@@ -33,11 +37,12 @@ pub fn report(error:&str,steps:&Value)->Value{
  let completed=steps.as_array().into_iter().flatten().filter(|s|s["kind"]=="done").count();
  let last=steps.as_array().into_iter().flatten().rev().find(|s|s["kind"]=="done" && s["background"]!=true).and_then(|s|s["summary"].as_str()).map(|s|s.chars().take(240).collect::<String>());
  let detail=error.chars().take(1600).collect::<String>();
- let mut content=reason.to_string();if let Some(phase)=phase{content.push_str(&format!("\n\nWhile: {phase}."));}if let Some(last)=last{content.push_str(&format!("\n\nLast completed operation: {last}. This does not confirm the entire task succeeded."));}
- content.push_str(&format!("\n\nDetail: {detail}\n\n{help}"));
+ let mut content=detail.clone();
+ if detail.is_empty(){content=reason.to_string();}if let Some(phase)=phase{content.push_str(&format!("\n\nWhile: {phase}."));}if let Some(last)=last{content.push_str(&format!("\n\nLast completed operation: {last}. This does not confirm the entire task succeeded."));}
+ content.push_str(&format!("\n\n{help}"));
  json!({"content":content,"failure":{"detail":detail,"settings":settings,"local":local,"connections":lower.contains("computer")||lower.contains("accessibility")||lower.contains("screen recording"),"completed_operations":completed}})
 }
 #[cfg(test)]mod tests{use super::*;
  #[test]fn failures_explain_the_problem_and_preserve_uncertainty(){let result=report("Cloud HTTP 429",&json!([{"kind":"phase","summary":"Writing reply"},{"kind":"done","summary":"Updated file"}]));let text=result["content"].as_str().unwrap();assert!(text.contains("quota"));assert!(text.contains("Updated file"));assert!(text.contains("does not confirm"));assert_eq!(result["failure"]["completed_operations"],1);}
- #[test]fn stop_is_not_a_provider_failure_and_details_are_bounded(){assert!(report("Task stopped. Completed actions remain in Activity.",&json!([]))["content"].as_str().unwrap().starts_with("You stopped"));assert_eq!(report(&"x".repeat(5000),&json!([]))["failure"]["detail"].as_str().unwrap().len(),1600);}
+ #[test]fn stop_is_not_a_provider_failure_and_details_are_bounded(){assert!(report("Task stopped. Completed actions remain in Activity.",&json!([]))["content"].as_str().unwrap().starts_with("Task stopped"));assert_eq!(report(&"x".repeat(5000),&json!([]))["failure"]["detail"].as_str().unwrap().len(),1600);}
 }

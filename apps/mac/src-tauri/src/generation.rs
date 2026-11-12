@@ -98,20 +98,8 @@ pub fn request_model(model: &str, messages: Value, format: Option<Value>, limit:
         .post(endpoint("/api/chat"))
         .json(&body)
         .send()
-        .map_err(|_| {
-            "Local model is unavailable. Restart fabric-memory or load a model in Settings."
-                .to_string()
-        })?;
-    let ok = response.status().is_success();
-    let value: Value = response
-        .json()
-        .map_err(|_| "Invalid response from local model")?;
-    if !ok {
-        return Err(format!(
-            "Local model: {}. Load the model in Settings if it is missing.",
-            value["error"].as_str().unwrap_or("request failed")
-        ));
-    }
+        .map_err(|error| local_transport_error(model, &error))?;
+    let value = local_response(model, response)?;
     let text = value["message"]["content"]
         .as_str()
         .filter(|s| !s.trim().is_empty())
@@ -127,6 +115,33 @@ pub fn request_model(model: &str, messages: Value, format: Option<Value>, limit:
     )
 }
 
+fn local_transport_error(model: &str, error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        format!("Local Ollama request timed out while running {model}.")
+    } else if error.is_connect() {
+        format!("Could not connect to the local Ollama server for {model}.")
+    } else {
+        format!("Local Ollama request for {model} failed: {}", error)
+    }
+}
+
+fn local_response(model: &str, response: reqwest::blocking::Response) -> Result<Value, String> {
+    let status = response.status();
+    let parsed = response.json::<Value>();
+    if !status.is_success() {
+        let reason = parsed.as_ref().ok().and_then(|value| value["error"].as_str())
+            .map(|reason| reason.chars().take(600).collect::<String>());
+        return Err(match reason {
+            Some(reason) => format!("Local Ollama returned HTTP {} for {model}: {reason}", status.as_u16()),
+            None => format!("Local Ollama returned HTTP {} for {model}.", status.as_u16()),
+        });
+    }
+    parsed.map_err(|error| {
+        if error.is_timeout() { local_transport_error(model, &error) }
+        else { format!("Local Ollama returned an invalid JSON response for {model}.") }
+    })
+}
+
 pub fn tool_request(messages: Value, tools: Value) -> Result<Value, String> {
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -136,13 +151,9 @@ pub fn tool_request(messages: Value, tools: Value) -> Result<Value, String> {
         .build()
         .map_err(|e| e.to_string())?;
     crate::usage::local_call();
-    let response=client.post(endpoint("/api/chat")).json(&json!({"model":model(),"messages":messages,"tools":tools,"stream":false,"think":false,"keep_alive":"60s","options":{"num_ctx":16384,"num_predict":700,"temperature":0.1}})).send().map_err(|_|"Local action model is unavailable")?;
-    if !response.status().is_success() {
-        return Err("This local model could not plan tool calls. Choose a model with tool support in Settings.".into());
-    }
-    let mut value: Value = response
-        .json()
-        .map_err(|_| "Invalid local action response")?;
+    let model = model();
+    let response=client.post(endpoint("/api/chat")).json(&json!({"model":model,"messages":messages,"tools":tools,"stream":false,"think":false,"keep_alive":"60s","options":{"num_ctx":16384,"num_predict":700,"temperature":0.1}})).send().map_err(|error|local_transport_error(&model, &error))?;
+    let mut value = local_response(&model, response)?;
     if let Some(message) = value["message"].as_object_mut() {
         message.remove("thinking");
     } else {

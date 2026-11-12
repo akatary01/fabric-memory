@@ -82,6 +82,11 @@ pub fn ensure_ready()->Result<(),String>{
  let state=helper(&json!({"action":"permissions"})).map_err(|e|format!("Computer controller unavailable: {e}"))?;
  if state["accessibility"]!=true{return Err("Computer control needs macOS Accessibility access for fabric-memory. Open Connections → macOS access, enable fabric-memory under Accessibility, then tell me to continue. Auto-approval cannot grant macOS permissions.".into());}Ok(())
 }
+pub fn is_permission_block(error: &str) -> bool {
+    error.starts_with("macOS blocked Accessibility control.")
+        || error.starts_with("macOS blocked keyboard and mouse input for Fabric Memory.")
+}
+
 pub fn request_permissions(control: bool, screen: bool) -> Result<Value, String> {
     if !control && !screen { return Err("Choose computer control or screen capture before requesting access.".into()); }
     helper(&json!({"action":"request_permissions","control":control,"screen":screen}))

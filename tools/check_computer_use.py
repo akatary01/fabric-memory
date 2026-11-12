@@ -4,6 +4,7 @@ Run: python3 tools/check_computer_use.py
 Uses a disposable AppKit window and writes only inside its temporary directory.
 """
 import argparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import re
 import signal
 import subprocess
 import tempfile
+from threading import Thread
 import time
 import uuid
 
@@ -161,10 +163,61 @@ def run_agent(app_bundle, root, identifier, receipt, model):
     print(f"PASS agent ({model or 'default model'}): fixture saved the exact string {nonce!r}.", flush=True)
 
 
+def run_chrome(app_bundle):
+    """Verify real browser input using a temporary loopback page."""
+    title = f"Fabric Chrome Probe {uuid.uuid4().hex[:8]}"
+    expected = f"fabric-chrome-{uuid.uuid4().hex[:8]}"
+
+    class ProbePage(BaseHTTPRequestHandler):
+        def do_GET(self):
+            page = f'<title>{title}</title><label>Fabric test input <input autofocus></label>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(page.encode("utf-8"))
+
+        def log_message(self, *_):
+            pass
+
+    helper = app_bundle / "Contents/MacOS/fabric-computer-use"
+    with tempfile.TemporaryDirectory(prefix="fabric-chrome-check-") as directory, \
+            ThreadingHTTPServer(("127.0.0.1", 0), ProbePage) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        root = Path(directory)
+        url = f"http://127.0.0.1:{server.server_port}/probe"
+
+        def chrome(action, **args):
+            return controller(helper, root, action=action, app="chrome", **args)
+
+        def observed():
+            state = chrome("observe")
+            return state if title in state.get("window_title", "") else None
+
+        try:
+            chrome("open_url", url=url, new_tab=True)
+            state = until(observed, "Chrome did not display the temporary test page.")
+            print("PASS Chrome navigation: observed the temporary page in a new tab.", flush=True)
+            field = re.search(r"^([0-9.]+) AXTextField[^\n]*Fabric test input", state["ui"], re.MULTILINE)
+            assert field, "Chrome did not expose the test input."
+            chrome("type", element=field[1], text=expected)
+            until(lambda: expected in (observed() or {}).get("ui", ""), "Chrome did not reflect the typed text.")
+            print(f"PASS Chrome input: read back the exact text {expected!r}.", flush=True)
+        finally:
+            try:
+                if observed():
+                    chrome("key", key="Cmd+W")
+            finally:
+                server.shutdown()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=Path("/Applications/fabric-memory.app"))
     parser.add_argument("--agent", action="store_true", help="Also test Fabric's local planner with isolated app data.")
     parser.add_argument("--model", help="Use this installed local model for the agent test.")
+    parser.add_argument("--chrome", action="store_true", help="Also test input in a temporary Chrome tab.")
     options = parser.parse_args()
     run(options.app, options.agent, options.model)
+    if options.chrome:
+        run_chrome(options.app)

@@ -31,6 +31,9 @@ On an unlocked Mac with Fabric Memory installed and Accessibility granted, run:
 ```sh
 python3 tools/check_computer_use.py
 python3 tools/check_computer_use.py --agent --model qwen3-vl:2b
+python3 tools/check_computer_use.py --chrome
 ```
 
 The first command exercises the installed controller against a temporary AppKit window. The fixture writes the submitted text to its own receipt file, so a successful tool response alone cannot pass the test. The second command also checks whether the selected local model can plan and complete the task through Fabric's backend with isolated data. The screenshot check requires Screen Recording permission. The fixture takes focus while the test runs.
+
+The Chrome check opens a temporary loopback page in a new tab, types a random value, and reads it back from Chrome. It closes the tab only after identifying the test page.

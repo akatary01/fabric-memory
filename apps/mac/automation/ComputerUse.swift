@@ -27,7 +27,20 @@ func applicationURL(_ input:String)throws->URL {
 func resolved(_ input:String)throws->[String:Any]{let url=try applicationURL(input);return ["app":Bundle(url:url)?.bundleIdentifier ?? input,"name":url.deletingPathExtension().lastPathComponent]}
 func label(_ element:AXUIElement)->String{let role=attr(element,kAXRoleAttribute) as? String ?? "";let title=attr(element,kAXTitleAttribute) as? String ?? attr(element,kAXDescriptionAttribute) as? String ?? "";let value=(role=="AXSecureTextField" || (attr(element,kAXSubroleAttribute) as? String)=="AXSecureTextField") ? "[secure]":(attr(element,kAXValueAttribute) as? String ?? "");return [role,title,String(value.prefix(250))].filter{!$0.isEmpty}.joined(separator:" · ").components(separatedBy:.newlines).joined(separator:" ")}
 func node(_ root:AXUIElement,_ path:String)throws->AXUIElement{var item=root;for part in path.split(separator:"."){guard let index=Int(part),children(item).indices.contains(index)else{throw ToolError("The UI changed. Observe the app again.")};item=children(item)[index]};return item}
-func trusted()throws{guard AXIsProcessTrusted()else{throw ToolError("Enable Accessibility for fabric-memory in System Settings before using Mac controls.")}}
+func trusted() throws {
+ guard AXIsProcessTrusted() else {
+  throw ToolError("macOS blocked Accessibility control. Enable Fabric Memory in System Settings → Privacy & Security → Accessibility, then quit and reopen the app.")
+ }
+}
+func canPostInput() throws {
+ guard CGPreflightPostEventAccess() else {
+  throw ToolError("macOS blocked keyboard and mouse input for Fabric Memory. Open Connections → macOS access, request access, then quit and reopen Fabric Memory.")
+ }
+}
+func permissions() -> [String: Any] {
+ ["accessibility": AXIsProcessTrusted(), "input_events": CGPreflightPostEventAccess(),
+  "screen_recording": CGPreflightScreenCaptureAccess()]
+}
 func focusedAddressField(_ root: AXUIElement) -> AXUIElement? {
  guard let focused = attr(root, kAXFocusedUIElementAttribute),
        CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
@@ -225,14 +238,16 @@ func run(_ args:[String:Any])throws->[String:Any]{
   return ["video": !asset.tracks(withMediaType: .video).isEmpty,
           "audio": !asset.tracks(withMediaType: .audio).isEmpty]
  }
- if action=="permissions"{return ["accessibility":AXIsProcessTrusted(),"screen_recording":CGPreflightScreenCaptureAccess()]}
+ if action=="permissions"{return permissions()}
  if action=="request_permissions"{
   if args["control"] as? Bool == true {
    let options=[kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String:true] as CFDictionary
-   _=AXIsProcessTrustedWithOptions(options)
+   if AXIsProcessTrustedWithOptions(options) && !CGPreflightPostEventAccess() {
+    _ = CGRequestPostEventAccess()
+   }
   }
   if args["screen"] as? Bool == true && !CGPreflightScreenCaptureAccess(){_=CGRequestScreenCaptureAccess()}
-  return ["accessibility":AXIsProcessTrusted(),"screen_recording":CGPreflightScreenCaptureAccess()]
+  return permissions()
  }
  if action=="trash_workspace_item" {
   guard let path=args["path"] as? String, path.hasPrefix("/") else {throw ToolError("Missing workspace item")}
@@ -340,6 +355,9 @@ func run(_ args:[String:Any])throws->[String:Any]{
   return ["image_path":file.path,"summary":"Captured this Mac’s screen"]
  }
  try trusted()
+ if ["type", "key", "scroll"].contains(action) || (action == "click" && args["element"] == nil) {
+  try canPostInput()
+ }
  guard let target=app(args["app"] as? String)else{throw ToolError("App is not running")}
  let root=AXUIElementCreateApplication(target.processIdentifier)
  if action=="observe"{

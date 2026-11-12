@@ -467,6 +467,9 @@ impl Runner {
                 }
                 Err(error) => {
                     self.step("error", &error, json!({"tool":name,"action":args["action"]}));
+                    if name == "computer" && crate::computer::is_permission_block(&error) {
+                        return Err(error);
+                    }
                     if name == "web_search" { web_queries = WEB_SEARCH_LIMIT; }
                     stall.observe(name,&args,Err(&error))?;
                     observations.push(json!({"tool":name,"error":error}));
@@ -523,7 +526,7 @@ impl Runner {
             }
             if blender_inspected&&completion_task.is_some_and(crate::blender::wants_mutation){for tool in &mut offered{if tool["function"]["name"]=="blender"{crate::blender::after_inspection(&mut tool["function"]["parameters"]);}}}
             if offered.is_empty(){return Ok(json!(observations).to_string());}
-            let message = if let Some(model)=cloud_model{crate::cloud::tool_request(model,json!(messages),json!(offered))?}else if structured_local{structured_message(&updated_prompt,&offered,&observations,screen.take().as_deref())?}else{match crate::generation::tool_request(json!(messages), json!(offered)){Ok(message)=>message,Err(error)=>{self.check()?;if format_repairs>=2{return Err(format!("{error} Local action format failed repeatedly. Completed actions remain in Activity; choose another tool-capable model or continue with a smaller next step."));}format_repairs+=1;structured_local=true;self.step("running","Repairing local action format…",json!({"phase":"planning"}));structured_message(&updated_prompt,&offered,&observations,screen.take().as_deref())?}}};
+            let message = if let Some(model)=cloud_model{crate::cloud::tool_request(model,json!(messages),json!(offered))?}else if structured_local{structured_message(&updated_prompt,&offered,&observations,screen.take().as_deref())?}else{match crate::generation::tool_request(json!(messages), json!(offered)){Ok(message)=>message,Err(error)=>{self.check()?;if error.starts_with("Could not connect to the local Ollama server") || error.starts_with("Local Ollama request timed out"){return Err(error);}if format_repairs>=2{return Err(format!("{error} Local action format failed repeatedly. Completed actions remain in Activity; choose another tool-capable model or continue with a smaller next step."));}format_repairs+=1;structured_local=true;self.step("running","Repairing local action format…",json!({"phase":"planning"}));structured_message(&updated_prompt,&offered,&observations,screen.take().as_deref()).map_err(|repair| format!("{error}\n\nAction format retry: {repair}"))?}}};
             self.check()?;
             if self.revised(revision) { continue; }
             let calls = message["tool_calls"]
@@ -815,6 +818,9 @@ impl Runner {
                     Err(error) => {
                         if name == "web_search" { web_queries = WEB_SEARCH_LIMIT; }
                         self.step("error", &error, json!({"tool":name,"action":args["action"]}));
+                        if name == "computer" && crate::computer::is_permission_block(&error) {
+                            return Err(error);
+                        }
                         if self.revised(revision) {
                             let completed = self.receipts();
                             observations.push(json!({"interrupted_action":error,"completed_steps":completed.as_array().into_iter().flatten().rev().filter(|step| step["kind"] == "done").take(12).collect::<Vec<_>>()}));

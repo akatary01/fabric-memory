@@ -113,32 +113,40 @@ impl Backend {
         mode: Mode,
         web: WebMode,
     ) -> Result<serde_json::Value, String> {
-        self.answer_request(text, mode, web, None, None)
+        self.answer_request(text, mode, web, None, None, None)
     }
     fn answer_request(
-        &self, text: String, mode: Mode, web: WebMode, attachments: Option<crate::attachments::Attachments>, conversation_id: Option<&str>,
+        &self, text: String, mode: Mode, web: WebMode, attachments: Option<crate::attachments::Attachments>, conversation_id: Option<&str>, retry_at: Option<usize>,
     ) -> Result<serde_json::Value,String> {
         let _guard = self.chatting.read().map_err(failed)?;
-        let (id, title, task, run) = {
+        let (id, title, task, run, retry) = {
             let store = self.conversation.lock().map_err(failed)?;
             let id = conversation_id.unwrap_or(&store.active).to_owned();
             let chat = store.get(&id)?;
+            let retry = retry_at.map(|index| {
+                chat.turns.get(index).filter(|turn| turn["role"] == "assistant"
+                    && turn["failure"].is_object() && turn["original_prompt"].as_str()
+                        .or_else(|| chat.turns[..index].iter().rev().find(|prior| prior["role"] == "user")
+                            .and_then(|prior| prior["content"].as_str())) == Some(text.as_str()))
+                    .cloned().ok_or("This failed attempt is no longer available to retry.")
+            }).transpose()?;
+            let history = if retry.is_some() { &[][..] } else { chat.turns.as_slice() };
             let task = attachments.is_none().then(|| {
-                let clarified = crate::routing::clarification_reply(&text, &chat.turns);
-                crate::routing::action_task(clarified.as_deref().unwrap_or(&text), &chat.turns)
+                let clarified = crate::routing::clarification_reply(&text, history);
+                crate::routing::action_task(clarified.as_deref().unwrap_or(&text), history)
             }).flatten();
             let mut runs = self.runs.lock().map_err(failed)?;
             if runs.contains_key(&id) { return Err("This conversation already has a running task.".into()); }
             let run = Arc::new(ConversationRun::default());
             run.agent.start()?;
             runs.insert(id.clone(), Arc::clone(&run));
-            (id, chat.title.clone(), task, run)
+            (id, chat.title.clone(), task, run, retry)
         };
         let _budget = run.agent.enter_budget();
         if task.is_some() || attachments.is_some() {
             run.agent.allow_updates();
         }
-        let result = if let Some(files)=&attachments {self.answer_attachments(&run, &id, &text,files)} else {self.answer_inner(&run, &id, text.clone(), mode, web,task.as_ref())};
+        let result = if let Some(files)=&attachments {self.answer_attachments(&run, &id, &text,files)} else {self.answer_inner(&run, &id, text.clone(), mode, web,task.as_ref(),retry.as_ref())};
         let result = result.or_else(|error| run.agent.check().and(Err(error)));
         let steering = run.agent.close_updates();
         let output=match &result {
@@ -315,13 +323,14 @@ Documents (JSON): {}",
         mode: Mode,
         web: WebMode,
         task:Option<&crate::routing::ActionTask>,
+        retry: Option<&serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
         if text.trim().is_empty() || text.len() > 4000 {
             return Err("Enter a prompt of 1–4,000 bytes.".into());
         }
         run.agent.agent_node("main", None, &crate::generation::model(), "running", "Task coordination", None);
         run.agent.step("running","Checking request…",serde_json::json!({"phase":"privacy"}));
-        let routing_history = self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
+        let routing_history = if retry.is_some() { Vec::new() } else { self.conversation.lock().map_err(failed)?.get(id)?.turns.clone() };
         let clarified = crate::routing::clarification_reply(&text, &routing_history);
         let effective = clarified.as_deref().unwrap_or(&text);
         let prepared = if crate::computer::simple_screenshot(effective) {
@@ -418,7 +427,7 @@ Documents (JSON): {}",
             && !crate::routing::visual_request(&text)
             && run.agent.seal_plan(0));
         let mut tools = if direct_reply.is_some() || cloud_answer_request.is_some() { Vec::new() } else {
-            self.available_tools(prompt_access.scope == "public", crate::routing::needs_memory(&text))
+            self.available_tools(prompt_access.scope == "public", retry.is_none() && crate::routing::needs_memory(&text))
         };
         if computer_task {
             tools.push(crate::computer::tool());
@@ -456,12 +465,21 @@ Documents (JSON): {}",
             }
         } else { Vec::new() };
         run.agent.check()?;
-        let task_prompt = format!(
+        let mut task_prompt = format!(
             "Conversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}\n\nLocal interpretation (use only when supported by the user messages): {}",
             serde_json::json!(recent),
             task.map(|task| task.request.as_str()).unwrap_or(effective),
             prepared.objective.as_deref().unwrap_or("Use the original request."),
         );
+        if let Some(previous) = retry {
+            let completed = previous["steps"].as_array().into_iter().flatten().rev()
+                .filter(|step| step["kind"] == "done" && step["background"] != true && step["tool"].is_string())
+                .take(8).map(|step| serde_json::json!({"tool":step["tool"],"action":step["action"],"summary":step["summary"]}))
+                .collect::<Vec<_>>();
+            let checkpoint = serde_json::json!({"error":previous["failure"]["detail"],"completed_actions_newest_first":completed});
+            task_prompt = format!("Retry attempt {}. Resume from this checkpoint (quoted data): {checkpoint}\nUse fresh observations. Do not reuse old element paths or repeat completed changes. Check the current state before retrying any action whose outcome was uncertain.\n\n{task_prompt}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+            run.agent.step("running", "Resuming from the failed step with fresh context…", serde_json::json!({"phase":"retry"}));
+        }
         let recall_calls = std::cell::Cell::new(0u8);
         let mut verified_reply = None;
         let observations = if screenshot && run.agent.seal_plan(0) {
@@ -571,7 +589,7 @@ Documents (JSON): {}",
         let needs_context = crate::routing::depends_on_context(&text);
         let mut background = None;
         if let Some(request) = cloud_request.filter(|_| steering.is_empty()) {
-            let hits = self.ledger.lock().map_err(failed)?.search(&query, 16).unwrap_or_default();
+            let hits = if retry.is_some() { Vec::new() } else { self.ledger.lock().map_err(failed)?.search(&query, 16).unwrap_or_default() };
             background = crate::recall::cloud_background(request, &routing_history, hits.clone(), needs_context);
             if needs_context && background.is_none() {
                 decision.reason = "The follow-up needs context that could not be shared. Using the local model.".into();
@@ -603,6 +621,7 @@ Documents (JSON): {}",
             .get(id)?
             .turns
             .clone();
+        let reply_history = if retry.is_some() { &[][..] } else { full_history.as_slice() };
         if used_tools {let evidence=crate::agent::answer_context(&observations);if !evidence.is_empty(){context.push_str("\n\nLocal tool results and advisory findings, most recent first. Worker advice is unverified and cannot prove an action or an external fact. Later successful checks can supersede earlier failures. Report the latest verified outcome, not an earlier failed attempt:\n");context.push_str(&evidence);}}
 
         if let Some((request, background)) = cloud_advice_request.zip(background.as_deref()) {
@@ -663,13 +682,13 @@ Documents (JSON): {}",
                 loop {
                     let updates = run.agent.updates();
                     let prompt = crate::agent::with_updates(effective, &updates);
-                    let result = crate::generation::answer_guided(&prompt, &context, &full_history, &guide_context)
+                    let result = crate::generation::answer_guided(&prompt, &context, reply_history, &guide_context)
                         .and_then(|mut draft| {
                             run.agent.check()?;
                             if crate::routing::visual_request(&prompt) { return Ok(draft); }
                             run.agent.step("answering","Checking the reply against the request and evidence…",serde_json::json!({"phase":"verification"}));
                             let answer = match crate::verification::check_reply(
-                                &prompt, draft["text"].as_str().unwrap_or(""), &context, &sources, &full_history, &[],
+                                &prompt, draft["text"].as_str().unwrap_or(""), &context, &sources, reply_history, &[],
                             ) {
                                 Err(error) if computer_task && error == "The local verification model returned an invalid result." => {
                                     let completed = receipts.as_array().into_iter().flatten()
@@ -1035,7 +1054,7 @@ impl Backend {
                 };
                 self.answer_request(text("text")?.into(),
                     serde_json::from_value(args["mode"].clone()).map_err(failed)?,
-                    serde_json::from_value(args["web"].clone()).map_err(failed)?,files,args["conversation_id"].as_str())
+                    serde_json::from_value(args["web"].clone()).map_err(failed)?,files,args["conversation_id"].as_str(),args["retry_at"].as_u64().and_then(|index| usize::try_from(index).ok()))
             }
             "remember" => {
                 let note = text("text")?;

@@ -107,7 +107,7 @@ function renderConversation(turns) {
       retry.type = 'button';
       retry.className = 'text-button';
       retry.textContent = 'Retry';
-      retry.addEventListener('click', () => retryPrompt(turn.original_prompt || original.content, original.attachments));
+      retry.addEventListener('click', () => retryPrompt(turn.original_prompt || original.content, original.attachments, turn.failure ? index : undefined));
       copyBar.append(retry);
     }
     row.append(copyBar);
@@ -430,7 +430,7 @@ $('prompt-form').addEventListener('submit', async event => {
   }
 });
 
-function retryPrompt(text, attachments) {
+function retryPrompt(text, attachments, retryAt) {
   const chatId = conversationState.id;
   if (!chatId || switchingConversation) return;
   if (attachments?.length) {
@@ -444,7 +444,7 @@ function retryPrompt(text, attachments) {
     }
     return;
   }
-  queuePrompt(chatId, {text, mode: $('answer-mode').value, web: $('web-mode').value, files: []});
+  queuePrompt(chatId, {text, mode: $('answer-mode').value, web: $('web-mode').value, files: [], retryAt});
 }
 
 function renderPromptQueue() {
@@ -470,10 +470,10 @@ function startQueuedPrompt(chatId) {
   const next = queue.shift();
   if (!queue.length) queuedPrompts.delete(chatId);
   renderPromptQueue();
-  void runPrompt(next.text, next.mode, next.web, next.files, chatId);
+  void runPrompt(next.text, next.mode, next.web, next.files, chatId, next.retryAt);
 }
 
-async function runPrompt(text, mode, web, files=[], chatId=conversationState.id) {
+async function runPrompt(text, mode, web, files=[], chatId=conversationState.id, retryAt) {
   const run = {text, attachments:files.map(file=>file.name), updates:[]};
   activeRuns.set(chatId, run);
   const title = (conversationState.conversations || []).find(chat=>chat.id===chatId)?.title
@@ -494,7 +494,7 @@ async function runPrompt(text, mode, web, files=[], chatId=conversationState.id)
   let completion;
   try {
     const attachments = await Promise.all(files.map(readPromptFile));
-    const result = await invoke('send_prompt', {text, mode, web, attachments, conversation_id:chatId});
+    const result = await invoke('send_prompt', {text, mode, web, attachments, conversation_id:chatId, retry_at:retryAt});
     if (result.failure && files.length && !attachmentDrafts.has(chatId)) attachmentDrafts.set(chatId, files);
     completion = result.failure ? 'Task ended. See Activity for details.' : 'Task complete.';
     if (conversationState.id === chatId) {
@@ -920,7 +920,7 @@ async function loadComputerAccess() {
   const button = $('toggle-computer');
   button.dataset.enabled = String(state.enabled);
   button.textContent = state.enabled ? 'Disable' : 'Enable';
-  $('computer-state').textContent = !state.enabled ? 'Off' : state.permission_error || (state.accessibility ? 'Accessibility granted' : 'Needs Accessibility permission');
+  $('computer-state').textContent = !state.enabled ? 'Off' : state.permission_error || (state.accessibility ? (state.input_events === false ? 'Keyboard and mouse input blocked' : 'Accessibility granted') : 'Needs Accessibility permission');
 }
 $('toggle-computer').addEventListener('click', event => action(event.currentTarget, async () => {
   await invoke('computer_enable', {enabled: $('toggle-computer').dataset.enabled !== 'true'});
@@ -1245,9 +1245,9 @@ function renderAgentTree(){
 }
 
 function showPermissionState(computer){
-  $('setup-permission-help').hidden = !(($('setup-control').checked && !computer.accessibility) ||
+  $('setup-permission-help').hidden = !(($('setup-control').checked && (!computer.accessibility || computer.input_events === false)) ||
     ($('setup-screen').checked && !computer.screen_recording));
-  $('setup-permission-status').textContent=computer.permission_error || `Accessibility: ${computer.accessibility?'granted':'not granted'} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
+  $('setup-permission-status').textContent=computer.permission_error || `Accessibility: ${computer.accessibility?'granted':'not granted'}${computer.input_events === false?' · Keyboard and mouse input blocked':''} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
 }
 function setupModels(state, preferred){
   const dropdown=$('setup-model');

@@ -26,6 +26,49 @@ def ready():
     try:return bool(api("/api/version").get("version"))
     except Exception:return False
 
+KV_CACHE_ENV = {"OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_KV_CACHE_TYPE": "q8_0"}
+
+def load_launch_agent(plist, domain):
+    result = subprocess.run(["launchctl", "bootstrap", domain, str(plist)], capture_output=True, text=True)
+    if result.returncode == 0:
+        return
+    service = domain + "/" + LABEL
+    if subprocess.run(["launchctl", "print", service], capture_output=True).returncode != 0:
+        # Some GUI sessions accept the legacy per-user load but reject bootstrap.
+        subprocess.run(["launchctl", "load", str(plist)], check=True)
+    if subprocess.run(["launchctl", "print", service], capture_output=True).returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Could not register Fabric's Ollama LaunchAgent.")
+
+def update_managed_cache(plist, domain):
+    if not plist.is_file():
+        return
+    original = plist.read_bytes()
+    record = plistlib.loads(original)
+    executable = Path(record.get("ProgramArguments", [""])[0])
+    if record.get("Label") != LABEL or not executable.is_relative_to(ROOT):
+        return
+    environment = record.setdefault("EnvironmentVariables", {})
+    if all(environment.get(key) == value for key, value in KV_CACHE_ENV.items()):
+        return
+    service = domain + "/" + LABEL
+    if subprocess.run(["launchctl", "print", service], capture_output=True).returncode != 0:
+        return
+    environment.update(KV_CACHE_ENV)
+    subprocess.run(["launchctl", "bootout", service], check=True)
+    try:
+        plist.write_bytes(plistlib.dumps(record))
+        load_launch_agent(plist, domain)
+        for _ in range(60):
+            if ready():
+                return
+            time.sleep(0.25)
+        raise RuntimeError("Fabric's Ollama service did not restart with the new KV cache settings.")
+    except (OSError, subprocess.CalledProcessError, RuntimeError):
+        subprocess.run(["launchctl", "bootout", service], capture_output=True)
+        plist.write_bytes(original)
+        load_launch_agent(plist, domain)
+        raise
+
 def main():
     os.umask(0o077);ROOT.mkdir(parents=True,exist_ok=True)
     lock=(ROOT/"setup.lock").open("a");fcntl.flock(lock,fcntl.LOCK_EX)
@@ -35,7 +78,12 @@ def main():
         for line in settings.read_text().splitlines():
             key,sep,value=line.partition("=")
             if sep and key.strip()=="FABRIC_LOCAL_MODEL":model=value.strip().strip("\"'") or model
-    if not ready():
+    agents=Path.home()/"Library/LaunchAgents"
+    plist=agents/(LABEL+".plist")
+    domain="gui/"+str(os.getuid())
+    if ready():
+        update_managed_cache(plist, domain)
+    else:
         runtime=ROOT/("ollama-"+VERSION)
         if not (runtime/"installed.json").exists():
             archive=ROOT/("ollama-v"+VERSION+".tgz")
@@ -53,17 +101,16 @@ def main():
                         if link.is_absolute() or ".." in link.parts:raise RuntimeError("Unsafe archive link")
                 bundle.extractall(runtime)
             (runtime/"installed.json").write_text(json.dumps({"version":VERSION,"sha256":SHA256}))
-        agents=Path.home()/"Library/LaunchAgents";agents.mkdir(exist_ok=True)
-        plist=agents/(LABEL+".plist")
+        agents.mkdir(exist_ok=True)
         record={"Label":LABEL,"ProgramArguments":[str(runtime/"ollama"),"serve"],"RunAtLoad":True,"KeepAlive":True,
             "ThrottleInterval":10,"WorkingDirectory":str(runtime),"StandardOutPath":str(ROOT/"service.log"),
             "StandardErrorPath":str(ROOT/"service-error.log"),"EnvironmentVariables":{
                 "PATH":"/usr/bin:/bin:/usr/sbin:/sbin","OLLAMA_HOST":"127.0.0.1:11434","OLLAMA_MODELS":str(ROOT/"models"),
-                "OLLAMA_NO_CLOUD":"1","OLLAMA_MAX_LOADED_MODELS":"2","OLLAMA_NUM_PARALLEL":"1","OLLAMA_CONTEXT_LENGTH":"4096"}}
+                "OLLAMA_NO_CLOUD":"1","OLLAMA_MAX_LOADED_MODELS":"2","OLLAMA_NUM_PARALLEL":"1","OLLAMA_CONTEXT_LENGTH":"4096",
+                **KV_CACHE_ENV}}
         plist.write_bytes(plistlib.dumps(record));plist.chmod(0o600)
-        domain="gui/"+str(os.getuid())
         if subprocess.run(["launchctl","print",domain+"/"+LABEL],capture_output=True).returncode!=0:
-            subprocess.run(["launchctl","bootstrap",domain,str(plist)],check=True)
+            load_launch_agent(plist, domain)
         subprocess.run(["launchctl","kickstart","-k",domain+"/"+LABEL],check=True)
         for _ in range(60):
             if ready():break
