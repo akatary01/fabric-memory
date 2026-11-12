@@ -874,15 +874,15 @@ async function loadComputerAccess() {
   const button = $('toggle-computer');
   button.dataset.enabled = String(state.enabled);
   button.textContent = state.enabled ? 'Disable' : 'Enable';
-  $('computer-state').textContent = !state.enabled ? 'Off' : state.accessibility ? 'Accessibility granted' : 'Needs Accessibility permission';
+  $('computer-state').textContent = !state.enabled ? 'Off' : state.permission_error || (state.accessibility ? 'Accessibility granted' : 'Needs Accessibility permission');
 }
 $('toggle-computer').addEventListener('click', event => action(event.currentTarget, async () => {
   await invoke('computer_enable', {enabled: $('toggle-computer').dataset.enabled !== 'true'});
   await loadComputerAccess();
 }));
 $('computer-permissions').addEventListener('click', event => action(event.currentTarget, async () => {
-  await invoke('computer_permissions', {control: true});
-  await loadComputerAccess();
+  await openSetup();
+  $('setup-control').focus();
 }));
 let removedMCP=null;
 let editingMCP=null,mcpSnapshot={mcpServers:{}},mcpTestRevision=0;
@@ -1158,7 +1158,9 @@ function renderAgentTree(){
 }
 
 function showPermissionState(computer){
-  $('setup-permission-status').textContent=`Accessibility: ${computer.accessibility?'granted':'not granted'} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
+  $('setup-permission-help').hidden = !(($('setup-control').checked && !computer.accessibility) ||
+    ($('setup-screen').checked && !computer.screen_recording));
+  $('setup-permission-status').textContent=computer.permission_error || `Accessibility: ${computer.accessibility?'granted':'not granted'} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
 }
 function setupModels(state, preferred){
   const dropdown=$('setup-model');
@@ -1187,7 +1189,34 @@ async function openSetup(firstOnly=false){
 $('open-setup').addEventListener('click',()=>action($('open-setup'),()=>openSetup()));
 $('setup-close').addEventListener('click',()=>selectView('settings'));
 $('setup-refresh').addEventListener('click',()=>action($('setup-refresh'),async()=>setupModels(await invoke('setup_state'),$('setup-model').value)));
-$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>showPermissionState(await invoke('computer_permissions',{control:$('setup-control').checked,screen:$('setup-screen').checked}))));
+async function refreshSetupPermissions() {
+  const state = await invoke('computer_status');
+  if (!$('local-setup').hidden) showPermissionState(state);
+}
+$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>{
+  const control=$('setup-control').checked, screen=$('setup-screen').checked;
+  if (!control && !screen) {
+    $('setup-permission-status').textContent='Select Open and control apps or Capture and record the screen first.';
+    return;
+  }
+  try {
+    showPermissionState(await invoke('computer_permissions',{control,screen}));
+  } catch (error) {
+    $('setup-permission-status').textContent=error.message;
+  }
+}));
+$('setup-open-privacy').addEventListener('click',()=>action($('setup-open-privacy'),async()=>{
+  $('setup-permission-help').hidden=false;
+  await invoke('computer_privacy_settings');
+}));
+$('setup-check-access').addEventListener('click',()=>action($('setup-check-access'),refreshSetupPermissions));
+for (const id of ['setup-control','setup-screen']) {
+  $(id).addEventListener('change',()=>refreshSetupPermissions().catch(error=>message(error.message,true)));
+}
+window.addEventListener('focus',()=>{
+  if (!$('local-setup').hidden) refreshSetupPermissions().catch(error=>message(error.message,true));
+  else if (!document.querySelector('[data-panel="connections"]').hidden) loadComputerAccess().catch(error=>message(error.message,true));
+});
 $('local-setup-form').addEventListener('submit',event=>{
   event.preventDefault();
   action(event.submitter,async()=>{

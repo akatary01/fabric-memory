@@ -101,7 +101,10 @@
             <label class="approval-device"><input id="setup-control" type="checkbox"> Open and control apps</label>
             <label class="approval-device"><input id="setup-screen" type="checkbox"> Capture and record the screen</label>
             <button id="setup-permissions" class="secondary" type="button">Request macOS permissions</button>
+            <button id="setup-open-privacy" class="text-button" type="button">Open System Settings</button>
+            <button id="setup-check-access" class="text-button" type="button">Check access</button>
             <p class="chat-hint" id="setup-permission-status" role="status"></p>
+            <p class="chat-hint" id="setup-permission-help" hidden>In System Settings → Privacy &amp; Security, enable fabric-memory under Accessibility or Screen &amp; System Audio Recording. If it’s missing from Accessibility, use + to add fabric-memory from Applications. If macOS asks you to quit and reopen, do that, then check access again.</p>
           </fieldset>
           <fieldset>
             <legend>Workspace</legend>

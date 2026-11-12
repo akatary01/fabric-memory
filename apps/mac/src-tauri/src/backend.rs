@@ -917,6 +917,7 @@ impl Backend {
                 crate::computer::set_enabled(args["enabled"].as_bool().ok_or("Missing setting")?)
             }
             "computer_permissions" => crate::computer::request_permissions(args["control"].as_bool().unwrap_or(true),args["screen"].as_bool().unwrap_or_else(crate::computer::screen_sharing)),
+            "computer_privacy_settings" => crate::computer::open_privacy_settings(),
             "computer_image" => crate::computer::image(text("path")?),
             "computer_preview" => Ok(json!(crate::computer::preview()?)),
             "device_usage" => {

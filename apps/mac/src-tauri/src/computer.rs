@@ -64,7 +64,7 @@ pub fn device_usage() -> Result<Value, String> {
 
 pub fn status() -> Result<Value, String> {
     let mut value = helper(&json!({"action":"permissions"}))
-        .unwrap_or(json!({"accessibility":false,"screen_recording":false}));
+        .unwrap_or_else(|error| json!({"permission_error":error}));
     value["enabled"] = json!(enabled());
     value["screen_sharing"] = json!(screen_sharing());
     Ok(value)
@@ -75,7 +75,14 @@ pub fn ensure_ready()->Result<(),String>{
  if state["accessibility"]!=true{return Err("Computer control needs macOS Accessibility access for fabric-memory. Open Connections → macOS access, enable fabric-memory under Accessibility, then tell me to continue. Auto-approval cannot grant macOS permissions.".into());}Ok(())
 }
 pub fn request_permissions(control: bool, screen: bool) -> Result<Value, String> {
+    if !control && !screen { return Err("Choose computer control or screen capture before requesting access.".into()); }
     helper(&json!({"action":"request_permissions","control":control,"screen":screen}))
+}
+pub fn open_privacy_settings() -> Result<Value, String> {
+    let status = Command::new("/usr/bin/open").args(["-b", "com.apple.systempreferences"])
+        .status().map_err(|e| format!("Could not open System Settings: {e}"))?;
+    if !status.success() { return Err("Could not open System Settings.".into()); }
+    Ok(json!(true))
 }
 pub fn capture() -> Result<Value, String> {
     if !screen_sharing() { return Err("Enable Screen sharing in Settings → Access & local models.".into()); }
