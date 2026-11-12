@@ -6,7 +6,7 @@ from cli import main,mac_app
 
 class NativeLauncherTests(unittest.TestCase):
     def test_run_opens_native_bundle_and_does_not_start_git(self):
-        root=Path('/test/project');app=Path('/test/Memory Fabric.app')
+        root=Path('/test/project');app=Path('/test/fabric-memory.app')
         with patch('sys.argv',['fabric-memory','run']),patch('cli.sys.platform','darwin'),patch('cli.environment',return_value={'FABRIC_DATA_DIR':'/test/data'}),patch('cli.mac_app',return_value=app),patch('cli.subprocess.run') as run,patch('cli.open_mac_app') as launch:
             main(root)
         calls=[c.args[0] for c in run.call_args_list]
@@ -14,7 +14,7 @@ class NativeLauncherTests(unittest.TestCase):
         self.assertFalse(any('launch-git' in c for c in calls))
 
     def test_current_applications_bundle_is_reused(self):
-        app=Path('/Applications/Memory Fabric.app')
+        app=Path('/Applications/fabric-memory.app')
         with patch('cli.sys.platform','darwin'),patch('cli.installed_mac_app',return_value=app),patch('cli.subprocess.run') as run:
             self.assertEqual(mac_app(Path('/test/project'),{}),app)
         run.assert_not_called()

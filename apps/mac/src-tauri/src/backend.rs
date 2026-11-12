@@ -201,23 +201,13 @@ Documents (JSON): {}",
     fn available_tools(
         &self,
         public: bool,
-        web: WebMode,
         needs_memory: bool,
-        needs_web: bool,
-        include_mcp:bool,
     ) -> Vec<serde_json::Value> {
         use serde_json::json;
         let mut tools = Vec::new();
         if needs_memory {
             tools.push(json!({"name":"memory_search","description":"Quietly recall relevant personal context. Only when earlier personal facts are needed. Optional, at most once per task; returns up to two relevant notes, 800 characters total. Never narrate the lookup.","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}));
         }
-        if public && (web == WebMode::On || (web == WebMode::Auto && needs_web)) {
-            tools.push(json!({"name":"web_search","description":"Search the internet and retrieve public pages for a query","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}));
-        }
-        if crate::computer::enabled() {
-            tools.push(crate::computer::tool());
-        }
-        if !include_mcp{return tools;}
         if let Ok(catalog) = self.mcp.request("catalog", json!({})) {
             for server in catalog.as_array().into_iter().flatten() {
                 if !public && server["transport"] == "http" {
@@ -258,25 +248,7 @@ Documents (JSON): {}",
     ) -> Result<serde_json::Value, String> {
         use serde_json::json;
         match name {
-            "fabric_docs" => crate::agent_docs::read(args["path"].as_str().ok_or("Missing guide name")?),
-            "workspace" | "run_code" | "blender" => run.workspace.call(name,args,run.agent.remaining()?),
-            "computer" if args["action"] == "search_tabs" => {
-                let count = tools.iter().find(|tool| tool["name"] == "computer")
-                    .and_then(|tool| tool["inputSchema"]["properties"]["queries"]["minItems"].as_u64())
-                    .ok_or("Batch search was not offered for this request.")?;
-                let revision = run.agent.operation_revision();
-                crate::computer::search_tabs(args, count as usize, || {
-                    run.agent.check()?;
-                    if run.agent.revised(revision) {
-                        return Err("A user update interrupted the browser batch before the next operation.".into());
-                    }
-                    Ok(())
-                }, |kind, summary, mut detail| {
-                    detail["tool"] = json!("computer");
-                    run.agent.step(kind, summary, detail);
-                })
-            }
-            "computer" => crate::computer::call(args),
+            "workspace" | "run_code" | "saved_tool" => run.workspace.call(name,args,run.agent.remaining()?),
             "memory_search" => {
                 let query = args["query"].as_str().ok_or("Missing memory query")?;
                 if query.len() > 16000 {
@@ -295,18 +267,6 @@ Documents (JSON): {}",
                     .search(&vector, 8)
                     .map_err(failed)?;
                 Ok(json!(crate::recall::select(hits)))
-            }
-            "web_search" => {
-                let query = args["query"].as_str().ok_or("Missing web query")?;
-                if query.len() > 4000 {
-                    return Err("Web query exceeds limit".into());
-                }
-                if crate::privacy::classify(query).scope != "public" {
-                    return Err(
-                        "The query contains non-public context; it stays on this Mac.".into(),
-                    );
-                }
-                Ok(json!(crate::web::gather(query)?))
             }
             _ => {
                 let tool = tools
@@ -354,32 +314,11 @@ Documents (JSON): {}",
         if text.trim().is_empty() || text.len() > 4000 {
             return Err("Enter a prompt of 1–4,000 bytes.".into());
         }
-        {
-            let mut store = self.conversation.lock().map_err(failed)?;
-            if let Some(failed_turn) = crate::routing::blocked_tool_failure(&text, &store.get(id)?.turns) {
-                let rejected = failed_turn["steps"].as_array().into_iter().flatten().rev()
-                    .find(|step| step["kind"] == "rejected").and_then(|step| step["tool"].as_str());
-                let detail = rejected.map_or_else(
-                    || "The previous run did not record the name the planner tried.".to_string(),
-                    |tool| format!("The planner tried `{tool}`."),
-                );
-                let response = format!("Fabric's `computer` tool controls browser tabs on this Mac. Accessibility was verified. {detail} Say “Try again” to resume the browser task.");
-                let mut updated = store.clone();
-                let mut turns = updated.get(id)?.turns.clone();
-                turns.push(serde_json::json!({"role":"user","content":text,"local_control":true,"access":{"scope":"private"}}));
-                turns.push(serde_json::json!({"role":"assistant","content":response,"provider":"local","local_control":true,"access":{"scope":"private"}}));
-                updated.update_for(id, turns)?;
-                updated.save(&self.conversation_path)?;
-                *store = updated;
-                return Ok(serde_json::json!({"text":response,"provider":"local"}));
-            }
-        }
         run.agent.step("running","Checking request…",serde_json::json!({"phase":"privacy"}));
         let prompt_access = crate::privacy::classify(&text);
         run.agent.check()?;
         let routing_history=self.conversation.lock().map_err(failed)?.get(id)?.turns.clone();
-        let research_request = crate::verification::research_request(&text, &routing_history);
-        let _local_action_guard = if task.is_some() || research_request.is_some() {
+        let _local_action_guard = if task.is_some() {
             let mut waiting = false;
             loop {
                 run.agent.check()?;
@@ -396,19 +335,14 @@ Documents (JSON): {}",
                 }
             }
         } else { None };
-        let computer_task=research_request.is_none() && task.is_some_and(|t|t.kind=="computer");
-        let blender_task=task.is_some_and(|t|t.kind=="blender");
-        let blender_mcp=task.is_some_and(|t|t.kind=="blender_mcp");
-        if computer_task {crate::computer::begin_task();crate::computer::ensure_ready()?;run.agent.step("done","Computer access verified",serde_json::json!({"tool":"computer_access","phase":"preflight","result":{"enabled":true,"accessibility":true}}));}
-        let local_control=task.is_some() || research_request.is_some();
+        let local_control = task.is_some();
         run.agent.step("running","Selecting route…",serde_json::json!({"phase":"routing"}));
         let plan = if mode == Mode::Auto || web == WebMode::Auto {
             crate::routing::plan(&text,&routing_history)
         } else {
             crate::routing::fallback_context(&text,&routing_history)
         };
-        let local_web = crate::routing::task_web_mode(web, task);
-        let mut decision = crate::routing::decide(Mode::Local, local_web, &plan, false)?;
+        let mut decision = crate::routing::decide(Mode::Local, WebMode::Off, &plan, false)?;
         decision.reason = "The main agent always runs on this Mac.".into();
         let cloud_requested = mode == Mode::Cloud
             || (mode == Mode::Auto && matches!(plan.complexity.as_str(), "complex" | "expert"));
@@ -432,149 +366,39 @@ Documents (JSON): {}",
             }
         };
         let automatic_cloud = cloud_request.filter(|_| mode == Mode::Cloud || plan.route == Mode::Cloud);
-        let coding=task.is_some_and(|t|matches!(t.kind,"workspace"|"blender"));
-        if coding && crate::workspace::settings()["enabled"]!=true { return Err("Workspace access is off. Enable it in Settings → Access & local models.".into()); }
-        if prompt_access.scope != "public" {
-            if decision.web && !local_control {
-                return Err("Web access was kept off because this request contains private information. Remove the private details before searching.".into());
-            }
-            decision.web = false;
+        let coding = task.is_some_and(|task| task.kind == "workspace");
+        let workspace_enabled = crate::workspace::settings()["enabled"] == true;
+        if coding && !workspace_enabled {
+            return Err("Workspace access is off. Enable it in Settings → Access & local models.".into());
         }
         let direct_reply = plan.direct_reply.as_deref().map(str::trim).filter(|reply|
             !reply.is_empty() && reply.chars().count() <= 600
             && !crate::generation::planning_draft(reply)
             && automatic_cloud.is_none()
-            && !local_control && !decision.web && !plan.needs_web && !plan.needs_memory
+            && !local_control && !plan.needs_web && !plan.needs_memory
             && plan.route == Mode::Local && plan.complexity == "simple"
             && !crate::routing::visual_request(&text)
             && run.agent.seal_plan(0));
-        let mut tools = if direct_reply.is_some() { Vec::new() } else { self.available_tools(
-            prompt_access.scope == "public",
-            local_web,
-            crate::routing::needs_memory(&text),
-            plan.needs_web,
-            !computer_task && !blender_task,
-        ) };
-        if blender_mcp {
-            tools.retain(|tool| tool["server"].as_str().is_some_and(|server| server.to_ascii_lowercase().contains("blender")));
-            if !tools.iter().any(|tool| tool["method"] == "tools/call") {
-                return Err("No usable Blender MCP tools are available. Open Connections, add or reconnect your Blender MCP server, then retry.".into());
-            }
+        let mut tools = if direct_reply.is_some() { Vec::new() } else {
+            self.available_tools(prompt_access.scope == "public", crate::routing::needs_memory(&text))
+        };
+        if workspace_enabled && (local_control || plan.needs_web) {
+            tools.extend(crate::workspace::tools());
         }
-        if blender_task {tools = vec![crate::blender::tool()];}
-        if coding && !blender_task {tools.extend(crate::workspace::tools());tools.push(crate::agent_docs::tool());}
-        run.agent.agent_node("main",None,&crate::generation::model(),"running");
-        if computer_task {tools.retain(|tool|tool["name"]=="computer");}else{tools.retain(|tool|tool["name"]!="computer");}
-        let recent=crate::generation::conversation_context(&self.conversation.lock().map_err(failed)?.get(id)?.turns).iter().map(|t|serde_json::json!({"role":t["role"],"content":t["content"]})).collect::<Vec<_>>();
-        let guide_context=if coding && !computer_task{crate::workspace::project_context()?}else{String::new()};
-        let completion_request=if blender_task{task.map(|t|format!("[blender] {}",t.request))}else if computer_task{task.map(|t|t.request.clone())}else{None};
-        let mut task_prompt = format!("{}\n{}\n\nCurrent conversation history (quoted context, oldest first):\n{}\n\nActive task to carry out:\n{}\n\nLatest user message/update:\n{text}",if coding && !blender_task{crate::agent_docs::context()}else{String::new()},if blender_task{"Use the blender tool to create/edit/inspect files with bpy and save output_file inside the workspace. It runs Blender in the background, reopens saved files, and needs no GUI permission. This is an action request; execute tools rather than giving manual instructions. Use workspace tools to inspect files as needed. Unsaved GUI scenes are not available to the background tool."}else if computer_task{"Runtime preflight passed: the Fabric computer tool is installed, enabled, and macOS Accessibility permission was verified for this request. Its function schema is available below. Earlier assistant capability/permission claims may be stale."}else{""},serde_json::json!(recent),task.map(|t|t.request.as_str()).unwrap_or(&text));
-        if computer_task {
-            let goal = task.map(|t| t.request.as_str()).unwrap_or(&text);
-            let instructions = if let Some(count) = crate::computer::search_tab_count(goal) {
-                if let Some(tool) = tools.iter_mut().find(|tool| tool["name"] == "computer") {
-                    *tool = crate::computer::search_tabs_tool(count);
-                }
-                "Call computer with action=search_tabs and a list of distinct queries. Supply one query per requested tab in the user's order, sharing a specific topic when the requests refer to each other. The tool verifies the browser."
-            } else {
-                "For an explicit site address use computer action open_url with the full https:// URL. Use search_browser only for a search request. Observe the browser after navigation and use a fresh element path and expected label to click a link. If the requested link is absent, report that instead of navigating again."
-            };
-            task_prompt = format!("Use Fabric's computer tool to carry out the user request. Accessibility is verified. {instructions} Use the exact offered tool and action names.\n\nActive task: {goal}\nLatest user update: {text}");
-        }
-        let recall_calls=std::cell::Cell::new(0u8);
-        let blender_root=crate::workspace::settings()["path"].as_str().unwrap_or("").to_string();
-        let blender_goal = task.map(|task| task.request.as_str()).unwrap_or(&text);
-        let resumed = if blender_task && blender_goal != text {
-            crate::blender::resumed_file(blender_goal, &routing_history, &blender_root)
-        } else { None };
-        let file_context = if blender_task {
-            crate::blender::ensure_available()?;
-            let needs_source = crate::blender::needs_existing_scene(blender_goal);
-            let named = needs_source.then(|| crate::blender::named_input(blender_goal)).flatten();
-            let file = if let Some(name) = named {
-                Some(crate::blender::workspace_scene(&blender_root, &name)
-                    .ok_or_else(|| format!("Blender input {name} is missing or outside the selected workspace."))?)
-            } else {
-                resumed.clone()
-                    .or_else(|| crate::blender::active_file(blender_goal, &routing_history, &blender_root))
-                    .and_then(|file| crate::blender::workspace_scene(&blender_root, &file))
-            };
-            if file.is_none() && needs_source {
-                return Err("Save the Blender scene as a .blend file in the selected workspace and provide its filename, or ask Fabric to create a new scene.".into());
-            }
-            let mut tool = crate::blender::task_tool(blender_goal, resumed.as_deref());
-            if let Some(branches) = tool["inputSchema"]["anyOf"].as_array_mut() {
-                if file.is_none() && crate::blender::wants_new_scene(blender_goal) {
-                    branches.retain(|branch| branch["properties"]["operation"]["const"] == "create");
-                } else if needs_source {
-                    branches.retain(|branch| branch["properties"]["operation"]["const"] != "create");
-                    if let Some(source) = &file {
-                        for branch in branches {
-                            branch["properties"]["input_file"] = serde_json::json!({"type":"string","enum":[source]});
-                        }
-                    }
-                }
-            }
-            task_prompt = crate::blender::planning_context(blender_goal, crate::routing::clean_action_prompt(&text), file.as_deref());
-            if let Some(available) = tools.iter_mut().find(|tool| tool["name"] == "blender") {
-                *available = tool;
-            }
-            run.agent.step("done", "Blender tool available", serde_json::json!({"tool":"blender_access","phase":"preflight"}));
-            file
-        } else { None };
-        let active_blender_file=std::cell::RefCell::new(file_context);
-        let simple_scene = task.filter(|_| blender_task)
-            .and_then(|task| crate::blender::simple_scene(&task.request));
+        run.agent.agent_node("main", None, &crate::generation::model(), "running");
+        let recent = crate::generation::conversation_context(&routing_history).iter()
+            .map(|turn| serde_json::json!({"role":turn["role"],"content":turn["content"]}))
+            .collect::<Vec<_>>();
+        let guide_context = if coding { crate::workspace::project_context()? } else { String::new() };
+        let task_prompt = format!(
+            "{}\n\nConversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}",
+            if coding { crate::agent_docs::context() } else { String::new() },
+            serde_json::json!(recent),
+            task.map(|task| task.request.as_str()).unwrap_or(&text),
+        );
+        let recall_calls = std::cell::Cell::new(0u8);
         let mut listing_reply = None;
-        let mut verified_research = serde_json::Value::Null;
-        let observations = if let Some(request) = research_request.as_ref() {
-            use serde_json::json;
-            if web == WebMode::Off { return Err("Turn on Web search to verify a page before opening it.".into()); }
-            if prompt_access.scope != "public" || (request != &text && crate::privacy::classify(request).scope != "public") {
-                return Err("This request contains private information. Remove it before searching the public web.".into());
-            }
-            crate::computer::begin_task();
-            crate::computer::ensure_ready()?;
-            let revision = run.agent.updates().len();
-            let goal = crate::agent::with_updates(request, &run.agent.updates());
-            run.agent.step("running","Finding and checking candidate pages…",json!({"tool":"web_search"}));
-            let query = request.split(". ").next().unwrap_or(request);
-            let saved = routing_history.iter().rev().find(|turn| turn["verified_research"]["request"] == *request);
-            let reopen = text.trim().to_ascii_lowercase().starts_with("open ");
-            let page = if reopen {
-                saved.and_then(|turn| turn["verified_research"]["url"].as_str())
-                    .and_then(|url| crate::web::fetch(url).ok())
-                    .and_then(|page| crate::verification::choose_source(&goal, &[page]).ok())
-            } else { None };
-            let page = match page {
-                Some(page) => page,
-                None => {
-                    let candidates = crate::web::gather_pages(query)?;
-                    crate::verification::choose_source(&goal, &candidates)?
-                }
-            };
-            if !run.agent.seal_plan(revision) { return Err("Your request changed during verification. Please send the updated request again.".into()); }
-            run.agent.step("done","Verified a matching source",json!({"tool":"web_search","result":[page]}));
-            let url = page["url"].as_str().ok_or("Verified source is missing its URL.")?;
-            let open = json!({"action":"open_url","url":url,"app":"browser"});
-            run.agent.run_known_action("computer", &open, "Open the verified source", || crate::computer::call(&open))?;
-            let mut verified = false;
-            for _ in 0..3 {
-                run.agent.check()?;
-                let observed = crate::computer::call(&json!({"action":"observe","app":"browser"}))?;
-                run.agent.step("done","Observed the browser window",json!({"tool":"computer","action":"observe","result":{
-                    "app":observed["app"],"window_title":observed["window_title"],"window":observed["window"]
-                }}));
-                if crate::computer::observed_page(&observed, url) { verified = true; break; }
-                std::thread::sleep(std::time::Duration::from_millis(400));
-            }
-            if !verified { return Err(format!("I verified the source at {url} and sent it to the browser, but could not confirm that the expected page loaded.")); }
-            let title = page["title"].as_str().unwrap_or("Verified source").trim();
-            let rating = page["rating"]["out_of_five"].as_f64().map(|r|format!(" Published rating: {r:.1}/5.")).unwrap_or_default();
-            listing_reply = Some(format!("Opened {title}.{rating}\n\n{url}"));
-            verified_research = json!({"request":request,"url":url,"rating":page["rating"]});
-            String::new()
-        } else if task.is_some_and(|t| t.kind == "workspace" && crate::routing::workspace_listing(&t.request))
+        let observations = if coding && task.is_some_and(|task| crate::routing::workspace_listing(&task.request))
             && run.agent.seal_plan(0)
         {
             let args = serde_json::json!({"action":"list","path":"."});
@@ -592,62 +416,22 @@ Documents (JSON): {}",
                 format!("Files and folders in the selected workspace:\n\n{names}")
             });
             serde_json::json!([{"tool":"workspace","result":result.to_string()}]).to_string()
-        } else if let Some((primitive, open)) = simple_scene.filter(|_| run.agent.seal_plan(0)) {
-            let args = crate::blender::new_primitive_args(primitive);
-            let summary = format!("Create and verify a Blender {primitive}");
-            let result = run.agent.run_known_action("blender", &args, &summary, ||
-                self.execute_tool(run, "blender", &args, &tools))?;
-            let found = result["verified"] == true && result["objects"].as_array().into_iter().flatten()
-                .any(|object| object["type"] == "MESH" && object["name"].as_str().is_some_and(|name| name == crate::blender::primitive_name(primitive)));
-            if !found { return Err(format!("Blender did not verify a {primitive} in the saved scene.")); }
-            if open {
-                let open_args = serde_json::json!({"action":"open_scene","app":"Blender","path":result["saved_file"]});
-                run.agent.run_known_action("computer", &open_args, "Open the verified Blender scene in a new instance", ||
-                    crate::blender::open_verified_scene(&blender_root, &result))?;
-            }
-            serde_json::json!([{"tool":"blender","result":result.to_string()}]).to_string()
         } else if direct_reply.is_some() {
             String::new()
-        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if coding{crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, completion_request.as_deref(), true, cloud_request.filter(|_| automatic_cloud.is_none()), |name,args| {
+        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if coding{crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, None, true, cloud_request.filter(|_| automatic_cloud.is_none()), |name,args| {
             if name=="memory_search" {
                 if recall_calls.get()>=1 {return Ok(serde_json::json!([]));}
                 recall_calls.set(recall_calls.get()+1);
-            }
-            if name=="blender"{
-                if crate::workspace::settings()["path"]!=blender_root{return Err("The working folder changed during this task. Continue in the intended workspace before editing the Blender file.".into());}
-                let mut args = args.clone();
-                if matches!(args["operation"].as_str(), Some("edit" | "inspect")) {
-                    let supplied = args["input_file"].as_str().filter(|file| !file.trim().is_empty());
-                    let known = active_blender_file.borrow();
-                    let input = supplied.or(known.as_deref()).ok_or(
-                        "Blender edit needs an existing .blend file in the selected workspace. Use create only for a new scene."
-                    )?;
-                    let validated = crate::blender::workspace_scene(&blender_root, input)
-                        .ok_or("Blender input file is missing or outside the selected workspace.")?;
-                    args["input_file"] = serde_json::json!(validated);
-                }
-                let result=self.execute_tool(run, name,&args,&tools)?;if result["verified"]==true{if let Some(file)=result["saved_file"].as_str(){*active_blender_file.borrow_mut()=Some(file.to_string());}}return Ok(result);
-            }
-            if name == "computer" && args["app"].is_null() && run.agent.updates().is_empty() && task.is_some_and(|task| {
-                let goal = task.request.to_lowercase();
-                ["use chrome", "in chrome", "in google chrome", "with chrome"].iter().any(|phrase| goal.contains(phrase))
-                    && !["don't use chrome", "do not use chrome", "not in chrome", "instead of chrome"].iter().any(|phrase| goal.contains(phrase))
-            }) {
-                let mut args = args.clone();
-                args["app"] = serde_json::json!("chrome");
-                return self.execute_tool(run, name,&args,&tools);
             }
             self.execute_tool(run, name,args,&tools)
         })? };
         let mut steering = run.agent.close_updates();
         let used_tools = !observations.is_empty();
         let receipts = run.agent.receipts();
-        if blender_task && steering.is_empty() {crate::blender::check_outcome(task.map(|t|t.request.as_str()).unwrap_or(&text),&receipts)?;}
-        if computer_task && steering.is_empty() {crate::computer::check_task_outcome(task.map(|t|t.request.as_str()).unwrap_or(&text),&receipts)?;}
         let local_tools_used = receipts.as_array().into_iter().flatten().any(|step| {
             step["tool"]
                 .as_str()
-                .is_some_and(|name| !matches!(name, "web_search" | "delegate_local" | "delegate_cloud"))
+                .is_some_and(|name| !matches!(name, "delegate_local" | "delegate_cloud"))
         });
         run.agent.check()?;
         let query = self
@@ -677,46 +461,7 @@ Documents (JSON): {}",
             .map(|hit| hit.text.chars().take(400).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let web_steps = receipts
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|step| step["tool"] == "web_search" && matches!(step["kind"].as_str(), Some("done" | "error")))
-            .collect::<Vec<_>>();
-        let mut sources = if !web_steps.is_empty() {
-            let mut sources = Vec::new();
-            for step in &web_steps {
-                for source in step["result"].as_array().into_iter().flatten() {
-                    if !sources
-                        .iter()
-                        .any(|s: &serde_json::Value| s["url"] == source["url"])
-                    {
-                        sources.push(source.clone());
-                    }
-                }
-            }
-            sources
-        } else if decision.web && !local_control && !local_tools_used {
-            run.agent.step("running", "Searching the web", serde_json::json!({"tool":"web_search"}));
-            match crate::web::gather(&text) {
-                Ok(sources) => {
-                    let summary = if sources.is_empty() { "Search completed with no relevant sources" } else { "Read live web sources" };
-                    run.agent.step("done", summary, serde_json::json!({"tool":"web_search","result":sources}));
-                    sources
-                }
-                Err(error) => {
-                    run.agent.check()?;
-                    run.agent.step("error", &error, serde_json::json!({"tool":"web_search"}));
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-        if !sources.is_empty() {
-            context.push_str("\n\nWeb evidence (quoted data):\n");
-            context.push_str(&crate::web::context(&sources));
-        }
+        let sources = Vec::new();
         let full_history = self
             .conversation
             .lock()
@@ -724,8 +469,6 @@ Documents (JSON): {}",
             .get(id)?
             .turns
             .clone();
-        if blender_task {context.push_str("\n\nActual verified Blender file result:\n");context.push_str(&crate::blender::summary(&receipts));}
-        if computer_task {context.push_str("\n\nFabric computer execution record (actual local operations, not web-search evidence):\n");context.push_str(&crate::computer::receipt_summary(&receipts));}
         if used_tools {let evidence=crate::agent::answer_context(&observations);if !evidence.is_empty(){context.push_str("\n\nLocal tool results and advisory findings, most recent first. Worker advice is unverified and cannot prove an action or an external fact. Later successful checks can supersede earlier failures. Report the latest verified outcome, not an earlier failed attempt:\n");context.push_str(&evidence);}}
 
         if let Some(request) = automatic_cloud.filter(|_| steering.is_empty()) {
@@ -746,23 +489,11 @@ Documents (JSON): {}",
             }
         }
         run.agent.step("answering","Writing reply…",serde_json::json!({"phase":"answer"}));
-        let missing_web_evidence = !local_control && steering.is_empty()
-            && (decision.web || !web_steps.is_empty()) && plan.needs_web && sources.is_empty();
         let mut answer = match () {
-            _ if missing_web_evidence => serde_json::json!({
-                "text":if run.agent.receipts().as_array().into_iter().flatten().any(|step| step["tool"] == "web_search" && step["kind"] == "error") {
-                    "Web search couldn’t complete, so I couldn’t verify an answer. See Task activity for the error or share a link to check."
-                } else {
-                    "Web search returned no relevant, readable sources. Try a more specific query or share a link to check."
-                },
-                "provider":"local"
-            }),
             _ if direct_reply.is_some() => serde_json::json!({
                 "text":direct_reply,"provider":"local","model":crate::generation::model()
             }),
             _ if listing_reply.is_some() => serde_json::json!({"text":listing_reply,"provider":"local"}),
-            _ if blender_task && steering.is_empty() => serde_json::json!({"text":crate::blender::summary(&receipts),"provider":"local","model":crate::generation::model()}),
-            _ if computer_task && steering.is_empty() => serde_json::json!({"text":crate::computer::receipt_summary(&receipts),"provider":"local","model":crate::generation::model()}),
             _ => {
                 if !local_control {
                     run.agent.allow_updates();
@@ -790,22 +521,9 @@ Documents (JSON): {}",
             },
         };
         if (task.is_some()||crate::routing::permission_update(&text)) && crate::generation::planning_draft(answer["text"].as_str().unwrap_or("")){
-            if blender_task && steering.is_empty() {
-            let mut summary = crate::blender::summary(&receipts);
-            if receipts.as_array().into_iter().flatten().any(|step| step["action"] == "open_scene" && step["result"]["dispatched"] == true) {
-                summary.push_str(" Sent the verified scene to a new Blender instance.");
-            }
-            answer["text"] = serde_json::json!(summary);
-        }else if computer_task {answer["text"]=serde_json::json!(crate::computer::receipt_summary(&receipts));answer["draft_filtered"]=serde_json::json!(true);}else{return Err("The selected model returned an unfinished planning draft instead of a final response. Completed actions are retained; use the recorded outputs or choose a more capable model.".into());}
+            return Err("The selected model returned an unfinished planning draft. Completed actions remain in Task activity.".into());
         }
-        if blender_task && steering.is_empty() {answer["text"]=serde_json::json!(crate::blender::summary(&receipts));}
-        if computer_task && crate::computer::denies_access(answer["text"].as_str().unwrap_or("")){answer["text"]=serde_json::json!(crate::computer::receipt_summary(&receipts));}
-        if let Some(cloud_sources)=answer["sources"].as_array(){sources=cloud_sources.clone();}
         run.agent.check()?;
-        if !sources.is_empty() && crate::web::denies_access(answer["text"].as_str().unwrap_or("")) {
-            answer["text"]=serde_json::json!(crate::web::result_summary(&sources));
-            answer["web_result_fallback"]=serde_json::json!(true);
-        }
         if answer["provider"] == "local" {
             crate::usage::local_answer(&answer,&crate::cloud_models::comparison(&plan.complexity));
         }
@@ -854,7 +572,7 @@ Documents (JSON): {}",
         let mut history = full_history;
         history.push(serde_json::json!({"role":"user","content":text,"local_control":local_control,"access":prompt_access,"workspace":if coding{crate::workspace::settings()["path"].clone()}else{serde_json::Value::Null}}));
         history.extend(steering.iter().map(steering_turn));
-        history.push(serde_json::json!({"role":"assistant","content":response,"local_control":local_control || !steering.is_empty(),"access":response_access,"workspace":if coding{crate::workspace::settings()["path"].clone()}else{serde_json::Value::Null},"task_state":task.filter(|_| steering.is_empty()).map(|t|t.marker("complete")),"thinking":answer["thinking"],"provider":answer["provider"],"model":answer["model"],"route_reason":decision.reason,"sources":sources,"verified_research":verified_research,"steps":run.agent.saved_receipts(true)}));
+        history.push(serde_json::json!({"role":"assistant","content":response,"local_control":local_control || !steering.is_empty(),"access":response_access,"workspace":if coding{crate::workspace::settings()["path"].clone()}else{serde_json::Value::Null},"task_state":task.filter(|_| steering.is_empty()).map(|t|t.marker("complete")),"thinking":answer["thinking"],"provider":answer["provider"],"model":answer["model"],"route_reason":decision.reason,"sources":sources,"steps":run.agent.saved_receipts(true)}));
         let mut store = self.conversation.lock().map_err(failed)?;
         let mut updated = store.clone();
         updated.update_for(id, history)?;

@@ -434,7 +434,7 @@ impl Ledger {
                 folder,
                 &[
                     "-c",
-                    "user.name=Memory Fabric",
+                    "user.name=fabric-memory",
                     "-c",
                     "user.email=local@memory-fabric.invalid",
                     "commit",

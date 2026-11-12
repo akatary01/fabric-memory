@@ -31,11 +31,11 @@ Configure server JSON from Connections. Both stdio and Streamable HTTP are suppo
 
 Configuration and credentials stay in a private local file. `roots` advertises workspace locations to the server; server permissions determine what it can access. Remote HTTP requires HTTPS, except localhost. Interactive OAuth, server sampling, elicitation, and resumable background SSE are not implemented. Authentication headers can be configured explicitly.
 
-The agent reviews MCP calls before execution. Local memory reads and public web searches run directly. Stop cancels pending reviews, sends cancellation notifications to active MCP sessions, and prevents further steps. An external action already dispatched may finish.
+The agent reviews MCP calls before execution. Local memory reads run directly. Stop cancels pending reviews, sends cancellation notifications to active MCP sessions, and prevents further steps. An external action already dispatched may finish.
 
-## Computer use
+## User tools
 
-Enable **Computer use** in Connections, then use **macOS access** to grant Accessibility and Screen Recording to Memory Fabric. Fabric Memory owns these tools and permissions; its local agent calls the bundled helper directly. The helper accepts installed app names and bundle IDs; `browser` and `web` resolve to the default browser for observation and control. It can open HTTP/HTTPS URLs in that browser, observe app accessibility trees, open apps, clicks elements/coordinates, types, sends keys, scrolls, and captures the screen. Secure text fields are redacted in observations. The agent reviews control actions; observations run directly after computer use is enabled. Screenshots remain local. This build plans from accessibility observations; screenshot-based visual grounding is not implemented.
+Add integrations in Connections through MCP. To create a reusable Python helper, ask the agent to build and test one in the selected workspace. Helpers live in `fabric-tools/`. You can also put your own Python scripts there.
 
 ## Memory recall
 
@@ -80,7 +80,6 @@ The live status shows only the current operation (selecting a model, reading a f
 
 Failures remain in the conversation with the received error, the last completed operation when available, and a suggested next step. Use **Add details**, **Edit request**, **Open Settings**, or **Use Local** as appropriate. No action is automatically retried. Completed changes and action receipts remain available; continuing should inspect the current state before repeating work. Failure messages are private chat context and are not added as saved semantic memories. Workspace-sharing approval is scoped to the selected provider.
 
-Browser-control requests stay on the Mac and do not silently fall back to background search. An app lookup, failed action, or browser launch alone does not count as a verified browser search. A failure explains the actual error and can open Connections for computer permissions.
 
 ## Approval and computer planning
 
@@ -92,14 +91,6 @@ For Chromium-based apps the helper requests the fuller accessibility tree as an 
 
 Replies and code/HTML blocks have Copy buttons. Recorded command outputs can be copied from the reply's command receipt or Activity. The last command's actual exit status is shown separately from model prose. Final answer evidence prioritizes the newest results, so corrected failures do not displace a later successful run. App controls retain their observed target across approval dialogs instead of typing into whichever window became frontmost.
 
-Blocked action tasks retain their original request in the conversation. Access confirmations such as “I have given you access” resume that task, while explanation questions and new topics do not replay it. Fabric rechecks actual macOS access before planning and supplies the verified runtime state to the planner. Completion checks can send an unfinished plan back for the missing work; browser launch alone is not proof of typing or search. Unfinished operational drafts are excluded from new final replies and model context.
 
-Auto mode keeps simple and standard tasks local. It uses local search/page reading and local generation for ordinary web searches; freshness alone does not select a cloud model. Complex/expert synthesis or an explicit Cloud choice can still use cloud.
 
 Connections now has a local-command/remote-URL setup form, optional credentials and a connection test. Tests do not save drafts or replace existing sessions. Saved connections can be edited, enabled/disabled, reconnected, removed and restored with Undo. Raw JSON remains under Advanced; interactive OAuth is not implemented.
-
-## Blender files
-
-Blender file tasks receive a local `blender` tool with workspace/project guidance and configured MCP tools. It executes model-selected bpy code using the installed Blender application in a sandboxed background process. It can start a General scene, inspect an existing workspace .blend file, and save edits. Saved files are reopened for scene verification. Existing output files require an explicit overwrite argument. GUI permissions are not needed for this path; the unsaved scene in the running Blender window is separate. Use computer controls or an explicitly configured MCP connection when working with that live scene. Blender planning and file results remain local.
-
-Follow-ups such as “it is enabled” and “I want you to do it” retain the original blocked task. Blender replies report actual verified file results instead of inventing Accessibility requirements.

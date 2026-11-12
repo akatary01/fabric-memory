@@ -21,10 +21,9 @@ const attachmentDrafts=new Map();
 let closePaperMenu=()=>{};
 let switchingConversation=false;
 let taskState={running:false};
-let computerEnabled=false;
 let taskExpanded=false;
 
-for (const [id, values] of [['answer-mode', ['auto','local','cloud']], ['web-mode', ['auto','off','on']]]) {
+for (const [id, values] of [['answer-mode', ['auto','local','cloud']]]) {
   try { const value = localStorage.getItem(`fabric-${id}`); if (values.includes(value)) $(id).value = value; } catch {}
   $(id).addEventListener('change', () => {
     try { localStorage.setItem(`fabric-${id}`, $(id).value); } catch {}
@@ -32,14 +31,13 @@ for (const [id, values] of [['answer-mode', ['auto','local','cloud']], ['web-mod
   });
 }
 function updateRoutingHint() {
-  const web = $('web-mode').value;
   const mode = $('answer-mode').value;
   const workers = mode === 'local' ? 'Workers run on this Mac.' :
     !cloudAvailable ? 'Workers run on this Mac. Set up a provider in Cloud to enable cloud workers.' :
     mode === 'cloud' ? 'The main agent consults a cloud worker for shareable requests.' :
     'The main agent can consult cloud workers for complex, shareable requests.';
   renderContext();
-  $('routing-hint').textContent = `The main agent runs on this Mac. ${workers} ${web === 'off' ? 'Web requests are off.' : 'Web search sends your question to search engines; selected page text reaches the answering model.'}`;
+  $('routing-hint').textContent = `The main agent runs on this Mac. ${workers}`;
 }
 
 function renderConversation(turns) {
@@ -136,7 +134,7 @@ async function loadConversation() {
 }
 
 function invoke(command, args = {}) {
-  if(!window.__TAURI__?.core?.invoke)return Promise.reject(new Error('Open Memory Fabric with fabric-memory run.'));
+  if(!window.__TAURI__?.core?.invoke)return Promise.reject(new Error('Open fabric-memory with fabric-memory run.'));
   return window.__TAURI__.core.invoke('app_command',{command,args}).catch(error => { throw new Error(String(error?.message ?? error)); });
 }
 
@@ -332,7 +330,7 @@ $('prompt-form').addEventListener('submit', async event => {
   if ((!draft && !files.length) || !chatId || switchingConversation) return;
   const text = draft || 'Describe the attached files.';
 
-  const submission = {text, mode:$('answer-mode').value, web:$('web-mode').value, files};
+  const submission = {text, mode:$('answer-mode').value, web:'off', files};
   const run = activeRuns.get(chatId);
   conversationDrafts.delete(chatId);
   $('prompt').value = '';
@@ -563,8 +561,6 @@ function renderContext(){
   const last=conversationState.turns.filter(turn=>turn.role==='assistant').at(-1);
   $('context-model').textContent=last?.model||conversationState.model||'Local model';
   $('context-executor').textContent=last?.provider==='cloud'?'Cloud provider':'This Mac';
-  $('web-connection-mode').textContent=({auto:'Auto',on:'On',off:'Off'})[$('web-mode').value];
-  $('context-web').textContent=({auto:'Auto',on:'On',off:'Off'})[$('web-mode').value];
   $('context-cloud').textContent='□ Main agent runs locally';
   const list=$('context-memories');list.replaceChildren();
   if(!allMemories.length){const p=document.createElement('p');p.className='chat-hint';p.textContent='No saved memories yet.';list.append(p);return;}
@@ -821,12 +817,9 @@ $('stop-task').addEventListener('click', () => {
   invoke('agent_stop',{conversation_id:conversationState.id}).then(pollTask).catch(e => message(e.message,true));
 });
 async function loadConnections(){
-  const computer=await invoke('computer_status');computerEnabled=computer.enabled;$('toggle-computer').textContent=computer.enabled?'Disable':'Enable';$('computer-state').textContent=!computer.enabled?'Apps, keyboard, and screen':computer.accessibility?'Accessibility ready':'Needs Accessibility access';$('computer-permissions').hidden=!computer.enabled;
   $('mcp-status').textContent='Checking connections…';const servers=await invoke('mcp_catalog');$('mcp-status').textContent=servers.length?servers.filter(s=>s.status==='Connected').length+' connected · '+servers.length+' configured':'No servers configured';const list=$('mcp-servers');list.replaceChildren();
   for(const server of servers){const row=document.createElement('div');row.className='service-row mcp-server-row';const copy=document.createElement('div');copy.className='service-copy';const title=document.createElement('h2');title.textContent=server.name;const state=document.createElement('p');state.textContent=server.status==='Connected'?server.tools.length+' tools · '+server.resources.length+' resources · '+server.prompts.length+' prompts':server.status;copy.append(title,state);const browse=document.createElement('button');browse.className='text-button';browse.textContent='Browse';browse.disabled=server.status!=='Connected';browse.addEventListener('click',()=>browseMCP(server));const restart=document.createElement('button');restart.className='text-button';restart.textContent='Reconnect';restart.addEventListener('click',()=>action(restart,async()=>{await invoke('mcp_restart',{server:server.name});await loadConnections();}));const edit=document.createElement('button');edit.className='text-button';edit.textContent='Edit';edit.addEventListener('click',()=>openMCPConnection(server.name).catch(e=>message(e.message,true)));const remove=document.createElement('button');remove.className='text-button';remove.textContent='Remove';remove.addEventListener('click',()=>action(remove,async()=>{const config=await invoke('mcp_config');const previous=config.mcpServers[server.name];delete config.mcpServers[server.name];await invoke('mcp_save',{config});removedMCP={name:server.name,server:previous};$('undo-mcp-removal').hidden=false;await loadConnections();message('Connection removed. Undo is available.');}));const enabled=document.createElement('button');enabled.className='text-button';enabled.textContent=server.enabled?'Disable':'Enable';enabled.addEventListener('click',()=>action(enabled,async()=>{const config=await invoke('mcp_config');if(!config.mcpServers[server.name])throw Error('Connection no longer exists.');config.mcpServers[server.name].disabled=server.enabled;await invoke('mcp_save',{config});await loadConnections();}));row.append(copy,browse,edit,enabled,restart,remove);list.append(row);}
 }
-$('toggle-computer').addEventListener('click',async()=>{$('toggle-computer').disabled=true;try{await invoke('computer_enable',{enabled:!computerEnabled});}catch(e){message(e.message,true);}finally{$('toggle-computer').disabled=false;await loadConnections();}});
-$('computer-permissions').addEventListener('click',()=>action($('computer-permissions'),async()=>{await invoke('computer_permissions');await loadConnections();}));
 let removedMCP=null;
 let editingMCP=null,mcpSnapshot={mcpServers:{}},mcpTestRevision=0;
 function mcpTransport(){return document.querySelector('input[name="mcp-transport"]:checked').value;}
@@ -1052,7 +1045,7 @@ function renderAgentTree(){
 }
 
 function showPermissionState(computer){
-  $('setup-permission-status').textContent=`Accessibility: ${computer.accessibility?'granted':'not granted'} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
+  $('setup-permission-status').textContent=`Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
 }
 function setupModels(state, preferred){
   const dropdown=$('setup-model');
@@ -1065,9 +1058,8 @@ function setupModels(state, preferred){
 async function openSetup(firstOnly=false){
   const state=await invoke('setup_state');
   if(firstOnly&&state.complete)return;
-  $('setup-title').textContent=state.complete?'Access & local models':'Set up Memory Fabric';
+  $('setup-title').textContent=state.complete?'Access & local models':'Set up fabric-memory';
   setupModels(state,state.model);
-  $('setup-control').checked=state.computer.enabled;
   $('setup-screen').checked=state.computer.screen_sharing;
   $('setup-workspace-enabled').checked=state.workspace.enabled;
   $('setup-workspace').value=state.workspace.path;
@@ -1077,11 +1069,11 @@ async function openSetup(firstOnly=false){
 $('open-setup').addEventListener('click',()=>action($('open-setup'),()=>openSetup()));
 $('setup-close').addEventListener('click',()=>$('local-setup').close());
 $('setup-refresh').addEventListener('click',()=>action($('setup-refresh'),async()=>setupModels(await invoke('setup_state'),$('setup-model').value)));
-$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>showPermissionState(await invoke('computer_permissions',{control:$('setup-control').checked,screen:$('setup-screen').checked}))));
+$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>showPermissionState(await invoke('computer_permissions',{control:false,screen:$('setup-screen').checked}))));
 $('local-setup-form').addEventListener('submit',event=>{
   event.preventDefault();
   action(event.submitter,async()=>{
-    await invoke('setup_save',{model:$('setup-model').value,control:$('setup-control').checked,screen:$('setup-screen').checked,workspace:$('setup-workspace-enabled').checked,path:$('setup-workspace').value.trim()});
+    await invoke('setup_save',{model:$('setup-model').value,control:false,screen:$('setup-screen').checked,workspace:$('setup-workspace-enabled').checked,path:$('setup-workspace').value.trim()});
     $('local-setup').close();
     await Promise.all([loadWorkspace(),loadModelStatus(),loadConversation()]);
   });

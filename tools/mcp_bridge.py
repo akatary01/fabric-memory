@@ -1,4 +1,4 @@
-"""Memory Fabric MCP host: newline JSON-RPC stdio and Streamable HTTP.
+"""fabric-memory MCP host: newline JSON-RPC stdio and Streamable HTTP.
 The native process owns this worker. Configuration is private and never sent to models.
 """
 import json,os,queue,signal,subprocess,sys,threading,urllib.request,urllib.parse,urllib.error
@@ -20,7 +20,7 @@ class Session:
             url=urllib.parse.urlsplit(config.get('url',''))
             if url.username or url.password or url.fragment or not(url.scheme=='https' or (url.scheme=='http' and url.hostname in ('localhost','127.0.0.1','::1'))):raise ValueError('MCP requires HTTPS, or HTTP on localhost')
             self.opener=urllib.request.build_opener(NoRedirect())
-        try:init=self.rpc('initialize',{'protocolVersion':'2025-11-25','capabilities':{'roots':{'listChanged':False}},'clientInfo':{'name':'Memory Fabric','version':'0.2.0'}})
+        try:init=self.rpc('initialize',{'protocolVersion':'2025-11-25','capabilities':{'roots':{'listChanged':False}},'clientInfo':{'name':'fabric-memory','version':'0.2.0'}})
         except Exception:self.close();raise
         self.version=init.get('protocolVersion')
         if self.version not in ('2024-11-05','2025-03-26','2025-06-18','2025-11-25'):self.close();raise ValueError('Unsupported MCP protocol version')

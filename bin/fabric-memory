@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The single Memory Fabric command."""
+"""The single fabric-memory command."""
 from pathlib import Path
 import sys
 sys.dont_write_bytecode=True

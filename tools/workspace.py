@@ -1,5 +1,5 @@
 """Fabric-owned workspace tools and bounded, sandboxed command execution."""
-import json,os,signal,subprocess,sys,threading,time,tempfile,stat,textwrap,math
+import json,os,signal,subprocess,sys,threading,time,tempfile,stat,textwrap,math,re
 from pathlib import Path
 LIMIT=32768
 child=None
@@ -57,11 +57,45 @@ def execute(root,args,python=None,git=None):
         finally:
             if os.path.exists(name):os.unlink(name)
         return {'path':str(path.relative_to(root)),'written_bytes':len(text.encode())}
+    if action in ('list_tools', 'run_tool'):
+        return saved_tool(root, path, args, python, git)
     if action=='blender':return blender_execute(root,args,python,git)
     if action!='run':raise ValueError('Unknown workspace action')
     return run_command(root,path,args,python,git)
 
-def run_command(root,path,args,python=None,git=None,argv=None,read_paths=()):
+def saved_tool(root, path, args, python, git):
+    directory = root / 'fabric-tools'
+    if directory.is_symlink():
+        raise ValueError('fabric-tools must be a regular directory in this workspace')
+
+    def valid_name(name):
+        return isinstance(name, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', name)
+
+    if args['action'] == 'list_tools':
+        scripts = sorted(
+            p.stem for p in directory.glob('*.py')
+            if valid_name(p.stem) and not p.is_symlink() and p.is_file()
+        )
+        return {'directory': 'fabric-tools', 'tools': scripts[:100], 'truncated': len(scripts) > 100}
+
+    name = args.get('name')
+    if not valid_name(name):
+        raise ValueError('Use a listed tool name without the .py extension')
+    script = directory / (name + '.py')
+    if script.is_symlink() or not script.is_file():
+        raise ValueError(f'No saved Python tool named {name} in this workspace')
+    arguments = args.get('arguments', [])
+    if not isinstance(arguments, list) or len(arguments) > 32 or any(
+        not isinstance(arg, str) or len(arg) > 4096 or chr(0) in arg for arg in arguments
+    ):
+        raise ValueError('Use up to 32 text arguments of at most 4096 characters each')
+    return run_command(
+        root, path, {**args, 'network': False}, python, git,
+        argv=[python or sys.executable, '-s', str(script), *arguments],
+        keep_pythonhome=True,
+    )
+
+def run_command(root,path,args,python=None,git=None,argv=None,read_paths=(),keep_pythonhome=False):
     global child
     command=args.get('command','')
     if argv is None and (not isinstance(command,str) or not command.strip() or len(command)>16000):raise ValueError('Enter a command under 16 KB')
@@ -76,7 +110,7 @@ def run_command(root,path,args,python=None,git=None,argv=None,read_paths=()):
     if os.environ.get('SSL_CERT_FILE'):env['SSL_CERT_FILE']=os.environ['SSL_CERT_FILE']
     if git and Path(git).with_name('git-http-backend').is_file():env['GIT_EXEC_PATH']=str(Path(git).parent)
     if sys.platform!='darwin' or not Path('/usr/bin/sandbox-exec').exists():raise ValueError('Sandboxed execution requires macOS')
-    if argv is not None:env.pop('PYTHONHOME',None)
+    if argv is not None and not keep_pythonhome:env.pop('PYTHONHOME',None)
     child=subprocess.Popen(['/usr/bin/sandbox-exec','-p',sandbox(root,scratch,args.get('network') is True,read_paths),*(argv if argv is not None else ['/bin/zsh','-f','-c',command])],cwd=path,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
     buffers={};truncated={}
     def read(name,stream):

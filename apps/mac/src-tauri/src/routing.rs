@@ -102,7 +102,7 @@ pub fn needs_memory(question: &str) -> bool {
     .iter()
     .any(|phrase| text.contains(phrase))
 }
-pub fn coding_request(question:&str)->bool {let text=question.to_lowercase();["implement","debug","fix the","fix this","write code","execute code","run code","run the tests","build ","script","repository","codebase","coding"].iter().any(|term|text.contains(term))}
+pub fn coding_request(question:&str)->bool {let text=question.to_lowercase();["implement","debug","fix the","fix this","write code","execute code","run code","run the tests","build ","script","saved tool","reusable tool","own tooling","build a tool","repository","codebase","coding"].iter().any(|term|text.contains(term))}
 pub fn visual_request(question:&str)->bool {
     let text=question.to_lowercase();["mockup","mock-up","mock up","prototype","html preview","render html"].iter().any(|term|text.contains(term))
 }

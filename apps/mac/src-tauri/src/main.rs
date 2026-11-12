@@ -87,7 +87,7 @@ fn main() {
                     .menu(&menu)
                     .icon(screen_status_icon(false))
                     .icon_as_template(true)
-                    .tooltip("Memory Fabric: screen idle")
+                    .tooltip("fabric-memory: screen idle")
                     .build(app)?;
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -97,7 +97,7 @@ fn main() {
                             .is_some_and(|backend| backend.screen_active());
                         if current != active {
                             active = current;
-                            let tooltip = if active { "Memory Fabric: controlling the screen" } else { "Memory Fabric: screen idle" };
+                            let tooltip = if active { "fabric-memory: controlling the screen" } else { "fabric-memory: screen idle" };
                             let _ = tray.set_icon_with_as_template(Some(screen_status_icon(active)), true);
                             let _ = tray.set_tooltip(Some(tooltip));
                             let _ = status.set_text(if active { "Controlling the screen" } else { "Screen idle" });
@@ -117,7 +117,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![service::app_command])
         .run(tauri::generate_context!())
-        .expect("could not run Memory Fabric");
+        .expect("could not run fabric-memory");
 }
 
 

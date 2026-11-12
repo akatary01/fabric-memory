@@ -1,4 +1,4 @@
-# Memory Fabric
+# fabric-memory
 
 A local-first AI workspace for Mac, with shared memory through your own Memory beacon.
 
@@ -6,7 +6,7 @@ A local-first AI workspace for Mac, with shared memory through your own Memory b
 
 - Separate conversations, local chat, and semantic memory search
 - Coding agent with workspace edits, code execution, action review, and Stop
-- MCP connections and built-in Mac computer use
+- User-installed MCP tools and reusable workspace Python helpers
 - Configurable models, project agent instructions, and complexity-based cloud selection
 - Agent-classified public and private memories
 - Automatic memory sync, QR pairing, and one-click local beacon
@@ -15,7 +15,7 @@ A local-first AI workspace for Mac, with shared memory through your own Memory b
 
 ## Mac download
 
-Open the disk image, drag **Memory Fabric** to Applications, and launch it. Local models and web search are included. Requires macOS 14+; Intel and Apple Silicon supported.
+Open the disk image, drag **fabric-memory** to Applications, and launch it. A local model is included. Requires macOS 14+; Intel and Apple Silicon supported.
 
 [Build and sign an installer →](docs/DISTRIBUTION.md)
 
@@ -55,6 +55,6 @@ Moves unused build caches to Trash. Keeps source, models, archives, settings, an
 
 ## Configuration
 
-Choose models, MCP servers, and privacy options in Settings and Connections. Settings → Cloud manages providers and model selection. Tokens use Keychain. The standalone Mac app includes web search. Local chat works without a beacon or cloud key.
+Choose models, MCP servers, and privacy options in Settings and Connections. Settings → Cloud manages providers and model selection. Tokens use Keychain. Add web, browser, or other integrations through your own tools. Local chat works without a beacon or cloud key.
 
 [Agent setup →](docs/AGENT.md) · [Architecture and diagnostics →](docs/ARCHITECTURE.md)

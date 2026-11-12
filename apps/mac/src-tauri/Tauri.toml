@@ -1,4 +1,4 @@
-productName = "Memory Fabric"
+productName = "fabric-memory"
 version = "0.2.0"
 identifier = "local.memoryfabric.mac"
 
@@ -10,7 +10,7 @@ withGlobalTauri = true
 
 [[app.windows]]
 label = "main"
-title = "Memory Fabric"
+title = "fabric-memory"
 width = 1000
 height = 740
 minWidth = 760

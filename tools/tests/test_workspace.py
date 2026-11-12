@@ -41,6 +41,44 @@ class WorkspaceTests(unittest.TestCase):
    worker.stdin.close();worker.stdout.close();worker.stderr.close()
    with self.assertRaises(ProcessLookupError):os.kill(pid,0)
 
+class SavedToolTests(unittest.TestCase):
+    def test_discovery_excludes_symlinks_and_invalid_names(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            module.execute(root, {'action': 'write', 'path': 'fabric-tools/report.py', 'content': 'pass'})
+            directory = root / 'fabric-tools'
+            (directory / 'alias.py').symlink_to(directory / 'report.py')
+            (directory / 'invalid name.py').write_text('pass')
+            self.assertEqual(module.execute(root, {'action': 'list_tools'})['tools'], ['report'])
+            for name in ('../report', 'alias', 'missing', 'report.py'):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    module.execute(root, {'action': 'run_tool', 'name': name})
+            with self.assertRaises(ValueError):
+                module.execute(root, {'action': 'run_tool', 'name': 'report', 'arguments': 'not a list'})
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS sandbox')
+    def test_saved_script_runs_with_literal_arguments_and_workspace_scope(self):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as outside:
+            root = Path(folder)
+            secret = Path(outside) / 'secret'
+            secret.write_text('outside workspace')
+            module.execute(root, {
+                'action': 'write', 'path': 'fabric-tools/echo.py',
+                'content': 'import json, sys\nprint(json.dumps(sys.argv[1:]))',
+            })
+            args = ['has spaces', '$(touch leaked)']
+            result = module.execute(root, {'action': 'run_tool', 'name': 'echo', 'arguments': args})
+            self.assertEqual(result['exit_code'], 0, result)
+            self.assertEqual(json.loads(result['stdout']), args)
+            self.assertFalse((root / 'leaked').exists())
+            module.execute(root, {
+                'action': 'write', 'path': 'fabric-tools/read.py',
+                'content': f'print(open({str(secret)!r}).read())',
+            })
+            result = module.execute(root, {'action': 'run_tool', 'name': 'read'})
+            self.assertNotEqual(result['exit_code'], 0, result)
+            self.assertNotIn('outside workspace', result['stdout'])
+
 @unittest.skipUnless(sys.platform=='darwin' and Path('/Applications/Blender.app').is_dir(),'installed Blender on macOS')
 class BlenderTests(unittest.TestCase):
  def test_dent_changes_saved_sphere_geometry(self):

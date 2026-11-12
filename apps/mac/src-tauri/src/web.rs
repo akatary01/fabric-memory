@@ -306,7 +306,7 @@ fn search(question: &str, pages_only: bool) -> Result<Vec<Value>, String> {
             ("categories", "general"),
         ])
         .send()
-        .map_err(|_| "Web search is unavailable. Restart Memory Fabric and check your internet connection.".to_string())?;
+        .map_err(|_| "Web search is unavailable. Restart fabric-memory and check your internet connection.".to_string())?;
     if !response.status().is_success() {
         return Err(format!(
             "Search service returned HTTP {}",

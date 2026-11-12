@@ -122,3 +122,5 @@ button:not(.primary):focus-visible{background:var(--soft)}
 #tasks-list{display:grid;gap:4px}
 #tasks-list button{text-align:left;display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line)}
 #tasks-list button span:last-child{white-space:nowrap;color:var(--muted)}
+
+.wordmark{display:inline-flex;align-items:center;justify-content:center;gap:7px}.wordmark img{width:18px;height:18px}

@@ -8,8 +8,6 @@ PYTHON_VERSION='3.12.16'
 PYTHON_HASHES={'arm64':'353d5f1b4fd2715e7053f12f068435d5bbad16b91e057006b5d01e0925709a7e',
                'x86_64':'37c38fda76fec1fbf310adcbafb7f0d96af13b5511bf8ea954c3aa8eec185734'}
 TARGETS={'arm64':'aarch64-apple-darwin','x86_64':'x86_64-apple-darwin'}
-SEARCH_REVISION='3a3dd15bfafcb645a1b45c2c6c0798a8f786aaaf'
-SEARCH_HASH='1a10d9278f9b75aafab368f9f03ebc9bec653390b28091d60f961f325acb52ed'
 
 def run(*args,**kw):
     return subprocess.run([str(a) for a in args],check=True,**kw)
@@ -80,12 +78,12 @@ def package(root,output,identity=None,notary_profile=None):
     if notary_profile and not identity:raise ValueError('Notarization requires a Developer ID identity.')
     source_fingerprint=fingerprint(root)
     output=output.expanduser().resolve();output.mkdir(parents=True,exist_ok=True)
-    dmg=output/'Memory-Fabric-0.2.0-universal.dmg'
+    dmg=output/'fabric-memory-0.2.0-universal.dmg'
     if dmg.exists():raise ValueError('Output already exists; choose a new output directory.')
     uv=shutil.which('uv') or str(Path.home()/'.local/bin/uv')
     # Temporary source/runtime/build artifacts are deleted on success or failure.
     with tempfile.TemporaryDirectory(prefix='fabric-package-') as temporary:
-        work=Path(temporary);app=work/'image/Memory Fabric.app';contents=app/'Contents'
+        work=Path(temporary);app=work/'image/fabric-memory.app';contents=app/'Contents'
         macos=contents/'MacOS';resources=contents/'Resources';macos.mkdir(parents=True);resources.mkdir()
         guides=resources/'AgentDocs';guides.mkdir()
         for source in [root/'AGENTS.md',root/'README.md',*sorted((root/'docs').glob('*.md'))]:
@@ -109,14 +107,6 @@ def package(root,output,identity=None,notary_profile=None):
         extract(ollama_archive,resources/'ollama')
         download('https://raw.githubusercontent.com/ollama/ollama/v'+ollama_version+'/LICENSE',notices/'Ollama-LICENSE',
                  '5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226')
-        search_archive=work/'searxng.tar.gz'
-        download('https://codeload.github.com/searxng/searxng/tar.gz/'+SEARCH_REVISION,search_archive,SEARCH_HASH)
-        extract(search_archive,work/'search-source')
-        search=work/'search-source'/('searxng-'+SEARCH_REVISION)
-        shutil.copytree(search/'searx',resources/'search/searx',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-        shutil.copy2(search/'LICENSE',notices/'SearXNG-LICENSE')
-        shutil.copy2(search_archive,notices/'SearXNG-corresponding-source.tar.gz')
-        (resources/'search/searx/version_frozen.py').write_text('VERSION_STRING = VERSION_TAG = DOCKER_TAG = '+repr(SEARCH_REVISION)+'\nGIT_URL = \"https://github.com/searxng/searxng\"\nGIT_BRANCH = \"master\"\n')
         binaries=[];helpers=[]
         for arch,target in TARGETS.items():
             print('Preparing '+arch+' runtime…',flush=True)
@@ -126,7 +116,7 @@ def package(root,output,identity=None,notary_profile=None):
             download('https://github.com/astral-sh/python-build-standalone/releases/download/'+PYTHON_RELEASE+'/'+name.replace('+','%2B'),archive,PYTHON_HASHES[arch])
             extract(archive,runtime)
             run(uv,'pip','install','--python-version','3.12','--python-platform',target,'--no-build',
-                '--target',runtime/'site-packages','-r',search/'requirements.txt')
+                '--target',runtime/'site-packages','certifi')
             # Download ONNX from its official PyPI distribution; uv verifies index hashes.
             ort_target=work/('ort-'+arch)
             run(uv,'pip','install','--python-version','3.12','--python-platform',target,'--no-build','--no-deps',
@@ -156,15 +146,15 @@ def package(root,output,identity=None,notary_profile=None):
             if fingerprint(root)!=source_fingerprint:raise ValueError('Source kept changing during packaging. Run package again when edits are complete.')
         run('lipo','-create',*binaries,'-output',macos/'fabric-mac')
         run('lipo','-create',*helpers,'-output',macos/'fabric-computer-use')
-        shutil.copy2(root/'apps/mac/icons/MemoryFabric.icns',resources/'MemoryFabric.icns')
+        shutil.copy2(root/'apps/mac/icons/FabricMemory.icns',resources/'FabricMemory.icns')
         info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac',
-              'CFBundleName':'Memory Fabric','CFBundleDisplayName':'Memory Fabric','CFBundleIconFile':'MemoryFabric.icns',
+              'CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns',
               'CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2',
               'NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','LSMinimumSystemVersion':'14.0',
               'NSAppleEventsUsageDescription':'Control the Mac apps you choose for agent tasks.'}
         (contents/'Info.plist').write_bytes(plistlib.dumps(info))
         (resources/'standalone.json').write_text(json.dumps({'version':'0.2.0','architectures':list(TARGETS),
-            'source_fingerprint':source_fingerprint,'git':git_version,'python':PYTHON_VERSION,'ollama':'0.40.15','searxng':SEARCH_REVISION,'default_model':'lfm3-vl:latest'}))
+            'source_fingerprint':source_fingerprint,'git':git_version,'python':PYTHON_VERSION,'ollama':'0.40.15','default_model':'lfm3-vl:latest'}))
         metadata=json.loads(subprocess.check_output(['cargo','metadata','--format-version','1','--locked'],cwd=root))
         for dependency in metadata['packages']:
             folder=Path(dependency['manifest_path']).parent
@@ -182,12 +172,12 @@ def package(root,output,identity=None,notary_profile=None):
                 if magic==b'\x00\x05\x16\x07':sidecar.unlink()
         run('xattr','-cr',app);sign(app,identity)
         (work/'image/Applications').symlink_to('/Applications')
-        (work/'image/Install.txt').write_text('Memory Fabric\n\nDrag Memory Fabric to Applications, then open it.\nRequires macOS 14 or newer. Apple Silicon and Intel supported.\nLocal models and web search are included. Cloud tokens and Memory beacon are optional; configure them in the app.\n'+('' if identity and notary_profile else '\nTEST BUILD: this copy is not notarized for public distribution.\n'))
+        (work/'image/Install.txt').write_text('fabric-memory\n\nDrag fabric-memory to Applications, then open it.\nRequires macOS 14 or newer. Apple Silicon and Intel supported.\nA local model is included. Cloud tokens and Memory beacon are optional; configure them in the app.\n'+('' if identity and notary_profile else '\nTEST BUILD: this copy is not notarized for public distribution.\n'))
         if fingerprint(root)!=source_fingerprint:raise ValueError('Source changed after the native build. Re-run packaging to include the latest revision.')
-        run('hdiutil','create','-volname','Memory Fabric','-srcfolder',work/'image','-format','UDZO','-ov',dmg)
+        run('hdiutil','create','-volname','fabric-memory','-srcfolder',work/'image','-format','UDZO','-ov',dmg)
         mount=work/'verified-image';mount.mkdir()
         run('hdiutil','attach','-readonly','-nobrowse','-mountpoint',mount,dmg,stdout=subprocess.DEVNULL)
-        try:run('codesign','--verify','--deep','--strict',mount/'Memory Fabric.app')
+        try:run('codesign','--verify','--deep','--strict',mount/'fabric-memory.app')
         finally:run('hdiutil','detach',mount,stdout=subprocess.DEVNULL)
         if identity:run('codesign','--sign',identity,'--timestamp',dmg)
         if notary_profile:
@@ -197,6 +187,6 @@ def package(root,output,identity=None,notary_profile=None):
         dmg.with_suffix('.dmg.sha256').write_text(checksum+'  '+dmg.name+'\n')
         (output/'package-manifest.json').write_text(json.dumps({'artifact':dmg.name,'sha256':checksum,
             'architectures':list(TARGETS),'minimum_macos':'14.0','signed':bool(identity),'notarized':bool(notary_profile),
-            'personal_data_included':False,'bundled':['native app','computer-use helper','default local model','memory encoder','ONNX Runtime','Python MCP host','SearXNG web search','Git local memory beacon','sandboxed workspace executor']},indent=2)+'\n')
+            'personal_data_included':False,'bundled':['native app','computer-use helper','default local model','memory encoder','ONNX Runtime','Python MCP host','Git local memory beacon','sandboxed workspace executor']},indent=2)+'\n')
         print('Standalone installer: '+str(dmg),flush=True)
         if not identity or not notary_profile:print('Test installer only: Developer ID signing and Apple notarization still required for normal public downloads.')

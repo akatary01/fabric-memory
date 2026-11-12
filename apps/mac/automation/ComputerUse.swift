@@ -26,7 +26,7 @@ func applicationURL(_ input:String)throws->URL {
 func resolved(_ input:String)throws->[String:Any]{let url=try applicationURL(input);return ["app":Bundle(url:url)?.bundleIdentifier ?? input,"name":url.deletingPathExtension().lastPathComponent]}
 func label(_ element:AXUIElement)->String{let role=attr(element,kAXRoleAttribute) as? String ?? "";let title=attr(element,kAXTitleAttribute) as? String ?? attr(element,kAXDescriptionAttribute) as? String ?? "";let value=(role=="AXSecureTextField" || (attr(element,kAXSubroleAttribute) as? String)=="AXSecureTextField") ? "[secure]":(attr(element,kAXValueAttribute) as? String ?? "");return [role,title,String(value.prefix(250))].filter{!$0.isEmpty}.joined(separator:" · ").components(separatedBy:.newlines).joined(separator:" ")}
 func node(_ root:AXUIElement,_ path:String)throws->AXUIElement{var item=root;for part in path.split(separator:"."){guard let index=Int(part),children(item).indices.contains(index)else{throw ToolError("The UI changed. Observe the app again.")};item=children(item)[index]};return item}
-func trusted()throws{guard AXIsProcessTrusted()else{throw ToolError("Enable Accessibility for Memory Fabric in System Settings before using Mac controls.")}}
+func trusted()throws{guard AXIsProcessTrusted()else{throw ToolError("Enable Accessibility for fabric-memory in System Settings before using Mac controls.")}}
 func focusedAddressField(_ root: AXUIElement) -> AXUIElement? {
  guard let focused = attr(root, kAXFocusedUIElementAttribute),
        CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
@@ -289,7 +289,7 @@ func run(_ args:[String:Any])throws->[String:Any]{
   return result
  }
  if action=="screenshot"{
-  guard CGPreflightScreenCaptureAccess()else{throw ToolError("Enable Screen Recording for Memory Fabric in System Settings.")}
+  guard CGPreflightScreenCaptureAccess()else{throw ToolError("Enable Screen Recording for fabric-memory in System Settings.")}
   guard let directory=ProcessInfo.processInfo.environment["FABRIC_DATA_DIR"]else{throw ToolError("Missing app storage")}
   let folder=URL(fileURLWithPath:directory).appendingPathComponent("Captures");try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700]);let file=folder.appendingPathComponent(UUID().uuidString+".png")
   let process=Process();process.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture");process.arguments=["-x","-m",file.path];try process.run();process.waitUntilExit();guard process.terminationStatus==0 else{throw ToolError("Screenshot failed")};try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:file.path)

@@ -7,7 +7,7 @@ def support():
 
 def fingerprint(root):
     h=hashlib.sha256(str(root).encode())
-    paths=[root/'AGENTS.md',root/'README.md',*root.glob('docs/*.md'),root/'Cargo.lock',root/'Cargo.toml',root/'core/Cargo.toml',*root.glob('core/**/*.rs'),*root.glob('apps/mac/src-tauri/src/*.rs'),root/'apps/mac/src-tauri/Cargo.toml',root/'apps/mac/src-tauri/build.rs',root/'apps/mac/src-tauri/Tauri.toml',*root.glob('apps/mac/ui/**/*'),*root.glob('apps/mac/automation/*.swift'),root/'tools/mcp_bridge.py',root/'tools/packaged_services.py',root/'tools/local_beacon.py',root/'tools/workspace.py',root/'tools/sync/host.py',root/'tools/sync/enrollment.py',root/'tools/bundle_git.py',root/'apps/mac/icons/MemoryFabric.icns']
+    paths=[root/'AGENTS.md',root/'README.md',*root.glob('docs/*.md'),root/'Cargo.lock',root/'Cargo.toml',root/'core/Cargo.toml',*root.glob('core/**/*.rs'),*root.glob('apps/mac/src-tauri/src/*.rs'),root/'apps/mac/src-tauri/Cargo.toml',root/'apps/mac/src-tauri/build.rs',root/'apps/mac/src-tauri/Tauri.toml',*root.glob('apps/mac/ui/**/*'),*root.glob('apps/mac/automation/*.swift'),root/'tools/mcp_bridge.py',root/'tools/packaged_services.py',root/'tools/local_beacon.py',root/'tools/workspace.py',root/'tools/sync/host.py',root/'tools/sync/enrollment.py',root/'tools/bundle_git.py',root/'apps/mac/icons/FabricMemory.icns']
     for p in sorted(p for p in paths if p.is_file()):h.update(str(p.relative_to(root)).encode());h.update(p.read_bytes())
     return h.hexdigest()
 
@@ -24,17 +24,17 @@ def stop_instances(executable):
             except ProcessLookupError:pass
         if not remaining:return
         time.sleep(.1)
-    if pids:raise ValueError('Close Memory Fabric, then run fabric-memory run again to finish updating it.')
+    if pids:raise ValueError('Close fabric-memory, then run fabric-memory run again to finish updating it.')
 
 def install_mac_app(root,binary,env):
-    app=support()/'App/Memory Fabric.app';app.parent.mkdir(parents=True,exist_ok=True)
+    app=support()/'App/fabric-memory.app';app.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.fabric-stage-',dir=app.parent) as stage_dir:
-        stage=Path(stage_dir)/'Memory Fabric.app';contents=stage/'Contents';(contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()
+        stage=Path(stage_dir)/'fabric-memory.app';contents=stage/'Contents';(contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()
         shutil.copy2(binary,contents/'MacOS/fabric-mac')
         subprocess.run(['xcrun','swiftc','-O',str(root/'apps/mac/automation/ComputerUse.swift'),'-o',str(contents/'MacOS/fabric-computer-use')],check=True)
-        shutil.copyfile(root/'apps/mac/icons/MemoryFabric.icns',contents/'Resources/MemoryFabric.icns')
+        shutil.copyfile(root/'apps/mac/icons/FabricMemory.icns',contents/'Resources/FabricMemory.icns')
         runtime_env={key:env[key] for key in ['FABRIC_ASSET_DIR','ORT_DYLIB_PATH','FABRIC_DATA_DIR','FABRIC_ENV_FILE','FABRIC_PYTHON'] if key in env}
-        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'Memory Fabric','CFBundleDisplayName':'Memory Fabric','CFBundleIconFile':'MemoryFabric.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env}
+        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env}
         (contents/'Info.plist').write_bytes(plistlib.dumps(info))
         subprocess.run(['xattr','-cr',str(stage)],check=True)
         subprocess.run(['codesign','--force','--sign','-',str(contents/'MacOS/fabric-computer-use')],check=True)
@@ -51,7 +51,7 @@ def install_mac_app(root,binary,env):
     return app
 
 def installed_mac_app(root):
-    app=Path('/Applications/Memory Fabric.app')
+    app=Path('/Applications/fabric-memory.app')
     try:
         manifest=json.loads((app/'Contents/Resources/standalone.json').read_text())
         if manifest.get('source_fingerprint')==fingerprint(root):return app
@@ -62,7 +62,7 @@ def mac_app(root,env,rebuild=False):
     if sys.platform!='darwin':raise ValueError('The Mac app requires macOS. The standalone Memory beacon also runs on Linux.')
     installed=installed_mac_app(root)
     if not rebuild and installed:return installed
-    app=support()/'App/Memory Fabric.app';stamp=app.parent/'mac-source.sha256'
+    app=support()/'App/fabric-memory.app';stamp=app.parent/'mac-source.sha256'
     if not rebuild and app.exists() and stamp.exists() and stamp.read_text()==fingerprint(root):return app
     if not shutil.which('cargo'):raise ValueError('Install Rust (rustup.rs) to build the Mac app')
     # Compile in temporary storage and retain only the signed app bundle.
@@ -139,17 +139,15 @@ def main(root):
                             str(root/'tools/requirements.lock')], cwd=root, check=True)
             subprocess.run([str(python), str(root/'tools/prepare.py')], cwd=root, check=True)
         installed=installed_mac_app(root)
-        candidate=installed or support()/'App/Memory Fabric.app'
+        candidate=installed or support()/'App/fabric-memory.app'
         stamp=candidate.parent/'mac-source.sha256'
         bundled=(bool(installed) or ((candidate/'Contents/Resources/standalone.json').is_file() and stamp.is_file() and stamp.read_text()==fingerprint(root))) and not args.rebuild
         if sys.platform=='darwin' and not bundled:
-            # Model/search services are independent of the Memory beacon.
-            for script in ('local_llm.py','web_search.py'):
-                subprocess.run([sys.executable,str(root/'tools'/script)],cwd=root,check=True)
+            subprocess.run([sys.executable, str(root/'tools/local_llm.py')], cwd=root, check=True)
         env=environment(root);app=mac_app(root,env,args.rebuild)
         if not args.no_open:
             open_mac_app(app,env)
-            print('Opened Memory Fabric for Mac.')
+            print('Opened fabric-memory for Mac.')
         else:print('Mac app ready: '+str(app))
-    except KeyboardInterrupt:print('\nMemory Fabric stopped.')
+    except KeyboardInterrupt:print('\nfabric-memory stopped.')
     except (ValueError,OSError,subprocess.CalledProcessError) as error:parser.exit(1,str(error)+'\n')

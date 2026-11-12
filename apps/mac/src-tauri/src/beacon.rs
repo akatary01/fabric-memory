@@ -22,7 +22,7 @@ pub fn invitation(text: &str, code: &str) -> Result<(String, String), String> {
     if text.starts_with("fabric-memory://") {
         let uri = reqwest::Url::parse(text).map_err(|_| "Invalid pairing QR")?;
         if uri.host_str() != Some("pair") {
-            return Err("Not a Memory Fabric pairing QR".into());
+            return Err("Not a fabric-memory pairing QR".into());
         }
         let urls: Vec<_> = uri.query_pairs().filter(|(k, _)| k == "url").collect();
         if urls.len() != 1 {

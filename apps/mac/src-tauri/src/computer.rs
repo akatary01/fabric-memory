@@ -72,7 +72,7 @@ pub fn status() -> Result<Value, String> {
 pub fn ensure_ready()->Result<(),String>{
  if !enabled(){return Err("Computer use is off. Enable it in Connections → Computer use.".into());}
  let state=helper(&json!({"action":"permissions"})).map_err(|e|format!("Computer controller unavailable: {e}"))?;
- if state["accessibility"]!=true{return Err("Computer control needs macOS Accessibility access for Memory Fabric. Open Connections → macOS access, enable Memory Fabric under Accessibility, then tell me to continue. Auto-approval cannot grant macOS permissions.".into());}Ok(())
+ if state["accessibility"]!=true{return Err("Computer control needs macOS Accessibility access for fabric-memory. Open Connections → macOS access, enable fabric-memory under Accessibility, then tell me to continue. Auto-approval cannot grant macOS permissions.".into());}Ok(())
 }
 pub fn request_permissions(control: bool, screen: bool) -> Result<Value, String> {
     helper(&json!({"action":"request_permissions","control":control,"screen":screen}))

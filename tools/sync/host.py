@@ -82,8 +82,8 @@ class Store:
         self.repo=Path(config["root"])/"repositories/fabric.git"
         self.spaces=config["spaces"]
     def git(self,*args,data=None,env=None):
-        variables=dict(os.environ,GIT_AUTHOR_NAME="Memory Fabric",GIT_AUTHOR_EMAIL="local@memory-fabric.invalid",
-                       GIT_COMMITTER_NAME="Memory Fabric",GIT_COMMITTER_EMAIL="local@memory-fabric.invalid")
+        variables=dict(os.environ,GIT_AUTHOR_NAME="fabric-memory",GIT_AUTHOR_EMAIL="local@memory-fabric.invalid",
+                       GIT_COMMITTER_NAME="fabric-memory",GIT_COMMITTER_EMAIL="local@memory-fabric.invalid")
         if env: variables.update(env)
         r=subprocess.run([self.config["git"],"--git-dir="+str(self.repo),*args],input=data,capture_output=True,env=variables,timeout=90)
         if r.returncode: raise ValueError("Git operation failed")
@@ -363,7 +363,7 @@ def main():
     context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.minimum_version=ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(config["certificate"],config["private_key"])
     server.socket=context.wrap_socket(server.socket,server_side=True)
-    print("Memory Fabric Git and prompt service ready",flush=True)
+    print("fabric-memory Git and prompt service ready",flush=True)
     server.serve_forever()
 
 if __name__=="__main__":main()

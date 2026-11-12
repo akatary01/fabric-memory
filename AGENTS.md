@@ -1,6 +1,6 @@
-# Memory Fabric agent instructions
+# fabric-memory agent instructions
 
-Memory Fabric is a native Tauri Mac app and a local-first memory ledger. The Mac WebView is a thin UI; tools, credentials, inference, and persistence belong in Rust or the bundled native helpers.
+fabric-memory is a native Tauri Mac app and a local-first memory ledger. The Mac WebView is a thin UI; tools, credentials, inference, and persistence belong in Rust or the bundled native helpers.
 
 - Read the project README and applicable nested AGENTS.md before editing. Treat scoped instructions as applying to their directory and descendants.
 - Keep user conversations, memory data, model weights, Keychain entries, and recovery backups intact. Clean only known regenerable build/test artifacts.

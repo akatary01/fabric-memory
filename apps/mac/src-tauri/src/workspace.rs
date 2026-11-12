@@ -17,20 +17,31 @@ pub fn save(folder:&str,cloud:bool,enabled:Option<bool>)->Result<Value,String>{
 }
 pub fn tools()->Vec<Value>{vec![
  json!({"name":"workspace","description":"Read applicable scoped project instructions, list, read, or write project files in the selected workspace. Inspect existing files before editing. Tool paths are relative: use action=list and path='.' to list the selected folder. Write complete file contents. File edits require review.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","write","instructions"]},"path":{"type":"string","description":"Relative path inside the selected workspace. Use . for its root."},"content":{"type":"string"}},"required":["action","path"]}}),
- json!({"name":"run_code","description":"Run a shell command in the selected workspace using Fabric's sandbox. Use this to execute Python/code, run project tests, inspect failures, and verify changes. python3 and Git are included; other runtimes must be installed. No network by default. Commands require review; output and exit status are returned. Use relative path for working directory. Commands default to 60 seconds. Set timeout_seconds for a longer build or test, up to 600 seconds within the task budget. Background processes stop with the action.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"path":{"type":"string"},"timeout_seconds":{"type":"integer"},"network":{"type":"boolean"}},"required":["command"]}})
+ json!({"name":"run_code","description":"Run a shell command in the selected workspace using Fabric's sandbox. Use this to execute Python/code, run project tests, inspect failures, and verify changes. python3 and Git are included; other runtimes must be installed. No network by default. Commands require review; output and exit status are returned. Use relative path for working directory. Commands default to 60 seconds. Set timeout_seconds for a longer build or test, up to 600 seconds within the task budget. Background processes stop with the action.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"path":{"type":"string"},"timeout_seconds":{"type":"integer"},"network":{"type":"boolean"}},"required":["command"]}}),
+ json!({"name":"saved_tool","description":"List or run reusable Python helpers in this workspace. List existing helpers before reuse. When the user asks to create a helper, use workspace.write at fabric-tools/<name>.py, give it a --help option, and verify it on representative inputs. Read an unfamiliar helper before running it. Helpers persist across conversations in this workspace. Runs are reviewed, sandboxed, and offline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","run"]},"name":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"path":{"type":"string","description":"Working directory relative to workspace root, defaults to ."},"timeout_seconds":{"type":"integer"}},"required":["action"]}})
 ]}
 #[derive(Default)]pub struct Host{pid:AtomicU32}
 impl Drop for Host{fn drop(&mut self){self.stop();}}
 impl Host{
  pub fn stop(&self){let pid=self.pid.swap(0,Ordering::Relaxed);if pid!=0 {let _=Command::new("/bin/kill").args(["-TERM",&pid.to_string()]).status();}}
  pub fn call(&self,name:&str,args:&Value,remaining:std::time::Duration)->Result<Value,String>{
-    let mut args=args.clone();if name=="run_code"{args["action"]=json!("run");}if name=="blender"{args["action"]=json!("blender");}
+    if name == "workspace" && !matches!(args["action"].as_str(), Some("list" | "read" | "write" | "instructions")) {
+        return Err("Choose list, read, write, or instructions for workspace files".into());
+    }
+    let mut args=args.clone();if name=="run_code"{args["action"]=json!("run");}
+    if name == "saved_tool" {
+        args["action"] = json!(match args["action"].as_str() {
+            Some("list") => "list_tools",
+            Some("run") => "run_tool",
+            _ => return Err("Choose list or run for saved tools".into()),
+        });
+    }
     let settings=settings();if settings["enabled"]!=true{return Err("Workspace access is off. Enable it in Settings → Access & local models.".into());}let root=settings["path"].as_str().ok_or("Missing workspace")?;
     std::fs::create_dir_all(root).map_err(|e|e.to_string())?;
     args["path"]=json!(relative_path(Path::new(root),args["path"].as_str().unwrap_or("."))?);
     if args["action"]=="instructions"{return instructions(Path::new(root),args["path"].as_str().unwrap_or("."));}
     let timeout = args["timeout_seconds"].as_u64().unwrap_or(60).clamp(1, 600);
-    let timeout = if args["action"] == "run" { timeout } else { timeout.min(120) };
+    let timeout = if matches!(args["action"].as_str(), Some("run" | "run_tool")) { timeout } else { timeout.min(120) };
     let timeout = timeout.min(remaining.as_secs().max(1));
     args["timeout_seconds"] = json!(timeout);
     let host_timeout = std::time::Duration::from_secs(

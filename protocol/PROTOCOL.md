@@ -1,4 +1,4 @@
-# Memory Fabric protocol v1
+# fabric-memory protocol v1
 
 Transport-independent UTF-8 NDJSON: one complete event per line. Unknown event
 versions and fields are rejected. No cloud key, runtime configuration, model

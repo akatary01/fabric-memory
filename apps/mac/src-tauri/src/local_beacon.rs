@@ -28,7 +28,7 @@ fn certificates(root:&Path,host:&str)->Result<Value,String> {
     if !ca_key.exists() || !ca_file.exists() {
         let key=KeyPair::generate().map_err(|e|e.to_string())?;
         let mut params=CertificateParams::new(vec![]).map_err(|e|e.to_string())?;
-        params.distinguished_name=DistinguishedName::new();params.distinguished_name.push(DnType::CommonName,"Memory Fabric beacon");
+        params.distinguished_name=DistinguishedName::new();params.distinguished_name.push(DnType::CommonName,"fabric-memory beacon");
         params.is_ca=IsCa::Ca(BasicConstraints::Unconstrained);params.key_usages=vec![KeyUsagePurpose::KeyCertSign,KeyUsagePurpose::CrlSign];
         let ca=params.self_signed(&key).map_err(|e|e.to_string())?;
         protected(&ca_key,key.serialize_pem().as_bytes())?;protected(&ca_file,ca.pem().as_bytes())?;
@@ -80,7 +80,7 @@ impl Host {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&root,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
         let identity=certificates(&root,host)?;
-        if !Command::new(&git).arg("--version").output().is_ok_and(|o|o.status.success()){return Err("Git is unavailable. Install the current standalone Memory Fabric app.".into());}
+        if !Command::new(&git).arg("--version").output().is_ok_and(|o|o.status.success()){return Err("Git is unavailable. Install the current standalone fabric-memory app.".into());}
         let saved=std::fs::read(root.join("config.json")).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok());
         let desired=saved.as_ref().and_then(|v|v["port"].as_u64()).unwrap_or(0);
         let listener=std::net::TcpListener::bind(format!("{}:{desired}",if host=="127.0.0.1"{"127.0.0.1"}else{"0.0.0.0"})).map_err(|_|"The local beacon port is occupied. Stop the other service and try again.".to_string())?;let port=listener.local_addr().map_err(|e|e.to_string())?.port();drop(listener);
