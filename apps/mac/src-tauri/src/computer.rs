@@ -55,6 +55,14 @@ pub fn vision_image(bytes: &[u8]) -> Result<String, String> {
         .as_str().map(str::to_owned).ok_or_else(|| "The vision screenshot could not be prepared.".into())
 }
 
+pub fn read_clipboard_image() -> Result<Value, String> {
+    helper(&json!({"action":"clipboard_image_read"}))
+}
+
+pub fn write_clipboard_image(data: &str) -> Result<Value, String> {
+    helper(&json!({"action":"clipboard_image_write","data":data}))
+}
+
 pub fn pdf_text(data: &str) -> Result<String,String> {
     helper(&json!({"action":"extract_pdf_text","data":data}))?["text"].as_str().map(str::to_owned).ok_or("Could not read PDF text.".into())
 }

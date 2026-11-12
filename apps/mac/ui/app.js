@@ -305,15 +305,29 @@ function renderAttachmentDraft() {
     chip.type='button';chip.className='secondary';
     chip.textContent=file.name+' ×';
     chip.setAttribute('aria-label','Remove '+file.name);
+    if (imageExtension(file)) {
+      chip.addEventListener('contextmenu', event => {
+        event.stopPropagation();
+        contextMenu(event, [{label:'Copy image',run:()=>copyImage(file)}, {label:'Remove image',run:()=>chip.click()}]);
+      });
+    }
     chip.addEventListener('click',()=>{attachmentDrafts.set(conversationState.id,files.filter((_,i)=>i!==index));renderAttachmentDraft();});
     list.append(chip);
   }
   if(files.length){const note=document.createElement('small');note.textContent='Attachments are read on this Mac.';list.append(note);}
 }
+function imageExtension(file) {
+  return ({'image/png':'png','image/jpeg':'jpg','image/webp':'webp'})[file.type]
+    || file.name?.match(/\.(png|jpe?g|webp)$/i)?.[1];
+}
 function addPromptFiles(incoming) {
   if(!conversationState.id || switchingConversation)return;
   const files=[...(attachmentDrafts.get(conversationState.id)||[])];
-  for(const file of incoming) {
+  for(const item of incoming) {
+    const ext = imageExtension(item);
+    const file = ext && !/\.(png|jpe?g|webp)$/i.test(item.name)
+      ? new File([item], `Pasted image.${ext}`, {type:item.type})
+      : item;
     if (!/\.(png|jpe?g|webp|pdf|docx|txt|md|csv|json|log|tsv|xml|ya?ml)$/i.test(file.name)) {
       message('Unsupported attachment: '+file.name,true);continue;
     }
@@ -335,9 +349,41 @@ function readPromptFile(file) {
 }
 $('attach-files').addEventListener('click',()=>$('prompt-files').click());
 $('prompt-files').addEventListener('change',()=>{addPromptFiles($('prompt-files').files);$('prompt-files').value='';});
-$('prompt-form').addEventListener('dragover',event=>{if(event.dataTransfer?.types.includes('Files'))event.preventDefault();});
+$('prompt-form').addEventListener('dragover',event=>{if(Array.from(event.dataTransfer?.types || []).includes('Files'))event.preventDefault();});
 $('prompt-form').addEventListener('drop',event=>{if(event.dataTransfer?.files.length){event.preventDefault();addPromptFiles(event.dataTransfer.files);}});
-$('prompt').addEventListener('paste',event=>{if(event.clipboardData?.files.length){event.preventDefault();addPromptFiles(event.clipboardData.files);}});
+async function pasteNativeImage() {
+  const chat = conversationState.id;
+  const image = await invoke('clipboard_image_read');
+  if (!image?.data) return false;
+  if (chat === conversationState.id && !switchingConversation) {
+    const bytes = Uint8Array.from(atob(image.data), char=>char.charCodeAt(0));
+    addPromptFiles([new File([bytes], image.name)]);
+  }
+  return true;
+}
+async function copyImage(file) {
+  await invoke('clipboard_image_write', {data:(await readPromptFile(file)).data});
+  message('Image copied.');
+}
+$('prompt').addEventListener('paste',event=>{
+  const clipboard=event.clipboardData;
+  const files=[...(clipboard?.files || [])];
+  if (!files.length) {
+    for (const item of clipboard?.items || []) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file=item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+  }
+  if (files.some(imageExtension) || files.some(file=>!file.type.startsWith('image/'))) {
+    event.preventDefault();
+    addPromptFiles(files);
+  } else if (!clipboard?.getData('text/plain')) {
+    event.preventDefault();
+    pasteNativeImage().catch(error=>message(error.message,true));
+  }
+});
 $('prompt-form').addEventListener('submit', async event => {
   event.preventDefault();
   const draft = $('prompt').value.trim();
@@ -744,7 +790,7 @@ document.addEventListener('contextmenu',event=>{
     const start=input.selectionStart??0,end=input.selectionEnd??input.value.length,selection=input.value.slice(start,end);
     const write=text=>{input.focus();if(input.selectionStart!==null)input.setRangeText(text,start,end,'end');else input.value=text;input.dispatchEvent(new Event('input',{bubbles:true}));};
     const items=[{label:'Copy',disabled:!selection,run:()=>invoke('clipboard_write',{text:selection})}];
-    if(!input.readOnly){items.unshift({label:'Cut',disabled:!selection,run:async()=>{await invoke('clipboard_write',{text:selection});write('');}});items.push({label:'Paste',run:async()=>write(await invoke('clipboard_read'))});}
+    if(!input.readOnly){items.unshift({label:'Cut',disabled:!selection,run:async()=>{await invoke('clipboard_write',{text:selection});write('');}});items.push({label:'Paste',run:async()=>{if(input.id==='prompt' && await pasteNativeImage())return;write(await invoke('clipboard_read'));}});}
     items.push({label:'Select all',run:()=>{input.focus();input.select();}});return contextMenu(event,items);
   }
   const selection=window.getSelection()?.toString()||'';
@@ -963,11 +1009,14 @@ function visibleTaskSteps(steps) {
 }
 
 let previewUrl;
+let previewBlob;
 let previewRequest = 0;
 function clearScreenPreview() {
   previewRequest++;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = undefined;
+  previewBlob = undefined;
+  $('copy-screen-preview').hidden = true;
   const image = $('screen-preview-image');
   image.hidden = true;
   image.removeAttribute('src');
@@ -984,10 +1033,12 @@ function showObservation(result) {
     $('observed-controls').textContent = result.image_path;
     invoke('computer_image', {path: result.image_path}).then(bytes => {
       if (request !== previewRequest) return;
-      previewUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], {type:'image/png'}));
+      previewBlob = new Blob([Uint8Array.from(bytes)], {type:'image/png'});
+      previewUrl = URL.createObjectURL(previewBlob);
       const image = $('screen-preview-image');
       image.src = previewUrl;
       image.hidden = false;
+      $('copy-screen-preview').hidden = false;
     }).catch(error => {
       if (request === previewRequest) $('screen-preview-status').textContent = error.message;
     });
@@ -999,6 +1050,10 @@ $('show-current-observation').addEventListener('click', () => {
 });
 $('close-computer-observation').addEventListener('click', () => $('computer-observation').close());
 $('computer-observation').addEventListener('close', clearScreenPreview);
+$('copy-screen-preview').addEventListener('click', event=>action(event.currentTarget, async()=>{
+  if (!previewBlob) return;
+  await copyImage(new File([previewBlob], 'Screenshot.png', {type:'image/png'}));
+}));
 $('capture-screen-preview').addEventListener('click', async event => {
   const button = event.currentTarget;
   clearScreenPreview();
@@ -1007,10 +1062,12 @@ $('capture-screen-preview').addEventListener('click', async event => {
   try {
     const bytes = await invoke('computer_preview');
     if (request !== previewRequest) return;
-    previewUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes)], {type:'image/png'}));
+    previewBlob = new Blob([Uint8Array.from(bytes)], {type:'image/png'});
+    previewUrl = URL.createObjectURL(previewBlob);
     const image = $('screen-preview-image');
     image.src = previewUrl;
     image.hidden = false;
+    $('copy-screen-preview').hidden = false;
     $('screen-preview-status').textContent = 'Current screen snapshot';
   } catch (error) {
     if (request === previewRequest) $('screen-preview-status').textContent = String(error?.message ?? error);

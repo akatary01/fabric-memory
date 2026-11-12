@@ -834,6 +834,8 @@ impl Backend {
                 }
                 Ok(json!(String::from_utf8_lossy(&output.stdout)))
             }
+            "clipboard_image_read" => crate::computer::read_clipboard_image(),
+            "clipboard_image_write" => crate::computer::write_clipboard_image(text("data")?),
             "clipboard_write" => {
                 use std::io::Write;
                 let mut child = clipboard_command()

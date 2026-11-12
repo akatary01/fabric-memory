@@ -160,6 +160,31 @@ func sampleDeviceUsage(at path: String) -> [String: Any] {
 
 func run(_ args:[String:Any])throws->[String:Any]{
  let action=args["action"] as? String ?? "observe"
+ if action == "clipboard_image_read" {
+  let clipboard = NSPasteboard.general
+  for (type, name) in [(NSPasteboard.PasteboardType.png, "Pasted image.png"),
+                       (NSPasteboard.PasteboardType(UTType.jpeg.identifier), "Pasted image.jpg")] {
+   if let data = clipboard.data(forType: type), !data.isEmpty {
+    guard data.count <= 6 * 1024 * 1024 else { throw ToolError("Pasted image exceeds 6 MB.") }
+    return ["name": name, "data": data.base64EncodedString()]
+   }
+  }
+  guard let data = clipboard.data(forType: .tiff) else { return [:] }
+  let converted = try run(["action": "resize_vision_image", "data": data.base64EncodedString()])
+  guard let encoded = converted["image"] as? String else { throw ToolError("Could not read the pasted image.") }
+  return ["name": "Pasted image.jpg", "data": encoded]
+ }
+ if action == "clipboard_image_write" {
+  guard let encoded = args["data"] as? String, encoded.utf8.count <= 24 * 1024 * 1024,
+        let data = Data(base64Encoded: encoded), data.count <= 16 * 1024 * 1024,
+        let image = NSImage(data: data) else {
+   throw ToolError("Could not copy this image.")
+  }
+  let clipboard = NSPasteboard.general
+  clipboard.clearContents()
+  guard clipboard.writeObjects([image]) else { throw ToolError("Could not write the image to the clipboard.") }
+  return ["copied": true]
+ }
  if action == "resize_vision_image" {
   guard let encoded = args["data"] as? String, let data = Data(base64Encoded: encoded),
         let source = CGImageSourceCreateWithData(data as CFData, nil),
