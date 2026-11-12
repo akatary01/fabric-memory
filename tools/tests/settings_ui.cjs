@@ -6,7 +6,8 @@ w.ResizeObserver=class {observe(){}};w.setInterval=()=>0;w.requestAnimationFrame
 const settings={provider:'OpenAI',provider_id:'openai',providers:[{id:'openai',name:'OpenAI'}],base_url:'https://api.openai.com/v1',model:'gpt-6.1-sol',automatic:false,enabled:true,token_configured:true,credential_source:'keychain'};
 let mcpConfig={mcpServers:{}};const mcpTests=[];
 const agentSettings={auto_approve:false,computer_cloud:false,provider:'OpenAI'};const saves=[];const copied=[];const promptCalls=[];const steeringCalls=[];let finishPrompt;const task={running:true,pending:null,steps:[{kind:'running',summary:'Reading browser'},{kind:'done',tool:'computer',summary:'Observed browser',result:{window_title:'Search results'}},{kind:'planning',thinking:'PRIVATE_THOUGHT'},{kind:'done',background:true,summary:'PRIVATE_MEMORY_LOOKUP'}]};
-w.__TAURI__={core:{invoke:async(_,{command,args})=>{if(command==='agent_steer'){steeringCalls.push(args.text);return null;}if(command==='send_prompt'){promptCalls.push(args.text);return new Promise(resolve=>{finishPrompt=resolve;});}if(command==='device_usage')return {local:{cpu_percent:33,memory_used:2147483648,memory_total:8589934592},devices:[{id:'phone',name:'Test phone',usage:{disk_used:10737418240,disk_total:68719476736,sampled_at:1}}]};if(command==='computer_status')return {enabled:false};if(command==='mcp_config')return JSON.parse(JSON.stringify(mcpConfig));if(command==='mcp_save'){mcpConfig=JSON.parse(JSON.stringify(args.config));return mcpConfig;}if(command==='mcp_test'){mcpTests.push(args.server);return {tools:3,resources:1,prompts:0};}if(command==='mcp_catalog')return Object.entries(mcpConfig.mcpServers).map(([name,s])=>({name,enabled:!s.disabled,status:'Connected',tools:[],resources:[],prompts:[]}));if(command==='clipboard_write'){copied.push(args.text);return null;}if(command==='agent_history')return [{kind:'done',summary:'Ran command',result:{stdout:'hello\n',stderr:'',exit_code:0},time:1}];if(command==='agent_settings')return agentSettings;if(command==='agent_settings_save'){saves.push(args);Object.assign(agentSettings,args);return agentSettings;}if(command==='agent_status')return task;if(command==='cloud_settings')return settings;if(command==='cloud_models')return {models:['gpt-6-luna','gpt-6.1-sol'],provider:'OpenAI'};if(command==='conversation')return {id:'test',title:'Test',turns:[],conversations:[],deleted:[]};if(command==='list_memories')return [];if(command==='memory_view')return {live_memories:0,memories:[]};if(command==='setup_state')return {complete:true};if(command==='status')return {live_memories:0,events:0};throw Error('Fixture unavailable: '+command);}}};
+let savedTurns=[];
+w.__TAURI__={core:{invoke:async(_,{command,args})=>{if(command==='agent_steer'){steeringCalls.push(args.text);return null;}if(command==='send_prompt'){promptCalls.push(args.text);return new Promise(resolve=>{finishPrompt=resolve;});}if(command==='device_usage')return {local:{cpu_percent:33,memory_used:2147483648,memory_total:8589934592},devices:[{id:'phone',name:'Test phone',usage:{disk_used:10737418240,disk_total:68719476736,sampled_at:1}}]};if(command==='computer_status')return {enabled:false};if(command==='mcp_config')return JSON.parse(JSON.stringify(mcpConfig));if(command==='mcp_save'){mcpConfig=JSON.parse(JSON.stringify(args.config));return mcpConfig;}if(command==='mcp_test'){mcpTests.push(args.server);return {tools:3,resources:1,prompts:0};}if(command==='mcp_catalog')return Object.entries(mcpConfig.mcpServers).map(([name,s])=>({name,enabled:!s.disabled,status:'Connected',tools:[],resources:[],prompts:[]}));if(command==='clipboard_write'){copied.push(args.text);return null;}if(command==='agent_history')return [{kind:'done',summary:'Ran command',result:{stdout:'hello\n',stderr:'',exit_code:0},time:1}];if(command==='agent_settings')return agentSettings;if(command==='agent_settings_save'){saves.push(args);Object.assign(agentSettings,args);return agentSettings;}if(command==='agent_status')return task;if(command==='cloud_settings')return settings;if(command==='cloud_models')return {models:['gpt-6-luna','gpt-6.1-sol'],provider:'OpenAI'};if(command==='conversation')return {id:'test',title:'Test',turns:savedTurns,conversations:[],deleted:[]};if(command==='list_memories')return [];if(command==='memory_view')return {live_memories:0,memories:[]};if(command==='setup_state')return {complete:true};if(command==='status')return {live_memories:0,events:0};throw Error('Fixture unavailable: '+command);}}};
 for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','mcp-form.js','app.js'])w.eval(fs.readFileSync(root+'/'+file,'utf8'));
 (async()=>{
  await w.loadCloudSettings();await w.loadCloudCatalog();
@@ -38,6 +39,28 @@ for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','m
  activity.querySelector('.copy-output').click();
  await Promise.resolve();
  assert.equal(copied.at(-1),'last success');
+ savedTurns=[{role:'assistant',content:'Finished',steps:[
+   {kind:'done',summary:'Saved success',time:1700000000,result:{exit_code:0}},
+   {kind:'done',tool:'run_code',summary:'Saved command failure',result:{exit_code:2,stderr:'missing file'}},
+   {kind:'done',background:true,summary:'PRIVATE_MEMORY_LOOKUP'},
+ ]}];
+ await w.loadConversation();
+ $('context-logs-tab').click();
+ assert.equal($('context-logs-tab').getAttribute('aria-selected'),'true');
+ assert.equal($('context-overview').hidden,true);
+ const logs=$('context-log-list');
+ assert(logs.textContent.includes('Saved success'));
+ assert(logs.querySelector('time'));
+ assert(!logs.textContent.includes('PRIVATE_MEMORY_LOOKUP'));
+ $('logs-errors-only').click();
+ assert(!logs.textContent.includes('Saved success'));
+ assert(logs.textContent.includes('exit 2'));
+ logs.querySelector('.copy-output').click();
+ await Promise.resolve();
+ assert.equal(copied.at(-1),'missing file');
+ $('context-overview-tab').click();
+ savedTurns=[];
+
 
  await w.loadConversation();
  const submit=text=>{$('prompt').value=text;$('prompt-form').dispatchEvent(new w.Event('submit',{cancelable:true}));};
@@ -52,6 +75,18 @@ for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','m
  finishPrompt({});await tick();
  assert.deepEqual(promptCalls,['first prompt']);
  assert.equal($('prompt').value,'draft typed during the first run');
+ savedTurns=[{role:'user',content:'Original request'},{
+   role:'assistant',content:'Failed',original_prompt:'Original request',failure:{},
+ }];
+ await w.loadConversation();
+ const failedReply=$('conversation').querySelector('[data-role="assistant"]');
+ [...failedReply.querySelectorAll('button')].find(button=>button.textContent==='Retry').click();
+ await tick();
+ assert.deepEqual(promptCalls,['first prompt','Original request']);
+ assert.equal($('prompt').value,'draft typed during the first run');
+ finishPrompt({});await tick();
+ savedTurns=[];
+
  await w.loadDeviceUsage();
  assert($('local-device-usage').textContent.includes('CPU 33%'));
  assert($('context-device-usage').textContent.includes('CPU 33%'));

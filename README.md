@@ -30,6 +30,8 @@ fabric-memory run
 
 The first build compiles the native Mac app. On a fresh checkout, use `fabric-memory run --prepare` to download and prepare the models first.
 
+For browser UI development, run `fabric-memory preview` and open http://127.0.0.1:4173. Refresh after editing the UI. The preview uses sample data.
+
 ## Memory beacon
 
 ```sh

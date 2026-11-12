@@ -93,8 +93,24 @@ function renderConversation(turns) {
       details.append(title, list);
       row.append(details);
     }
-    if(turn.steps?.some(step=>step.agent)){const team=document.createElement('button');team.className='text-button';team.textContent='Agent structure';team.addEventListener('click',()=>{selectedAgentTurn=index;showAgentTab(true);});row.append(team);}
-    const copyBar=document.createElement('div');copyBar.className='message-output-actions';copyBar.append(window.FabricChat.copyButton(row.dataset.messageText,turn.role==='user'?'Copy message':'Copy reply'));row.append(copyBar);
+    if(turn.steps?.some(step=>step.agent)){const team=document.createElement('button');team.className='text-button';team.textContent='Agent structure';team.addEventListener('click',()=>{selectedAgentTurn=index;showContextTab('agent-structure');});row.append(team);}
+    const copyBar = document.createElement('div');
+    copyBar.className = 'message-output-actions';
+    copyBar.append(window.FabricChat.copyButton(row.dataset.messageText, turn.role === 'user' ? 'Copy message' : 'Copy reply'));
+    let original = turn.role === 'user' ? turn : null;
+    if (turn.failure) {
+      const previous = turns.slice(0, index).filter(item => item.role === 'user');
+      original = previous.findLast(item => item.content === turn.original_prompt) ?? previous.at(-1);
+    }
+    if (original?.content?.trim()) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'text-button';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', () => retryPrompt(turn.original_prompt || original.content, original.attachments));
+      copyBar.append(retry);
+    }
+    row.append(copyBar);
     transcript.append(row);
   }
   requestAnimationFrame(()=>{transcript.scrollTop = transcript.scrollHeight;});
@@ -130,6 +146,7 @@ async function loadConversation() {
   pollTask().catch(() => {});
   renderActivity(state.turns);
   renderAgentTree();
+  renderContextLogs();
   renderContext();
 }
 
@@ -362,6 +379,23 @@ $('prompt-form').addEventListener('submit', async event => {
     startQueuedPrompt(chatId);
   }
 });
+
+function retryPrompt(text, attachments) {
+  const chatId = conversationState.id;
+  if (!chatId || switchingConversation) return;
+  if (attachments?.length) {
+    if (!$('prompt').value.trim() && !attachmentDrafts.get(chatId)?.length) {
+      $('prompt').value = text;
+      resizePrompt();
+      $('prompt').focus();
+      message('Reattach the original files, then send the prompt.');
+    } else {
+      message('Finish your current draft before retrying a prompt with attachments.');
+    }
+    return;
+  }
+  queuePrompt(chatId, {text, mode: $('answer-mode').value, web: 'off', files: []});
+}
 
 function renderPromptQueue() {
   const count = queuedPrompts.get(conversationState.id)?.length || 0;
@@ -804,7 +838,7 @@ async function pollTask(){
   if (!chatId) return;
   const state=await invoke('agent_status',{conversation_id:chatId});
   if (conversationState.id!==chatId) return;
-  taskState=state;renderAgentTree();
+  taskState=state;renderAgentTree();renderContextLogs();
   $('task-panel').hidden=!state.running&&!state.pending&&!(taskExpanded&&state.steps?.length);$('stop-task').hidden=!state.running;$('stop-task').disabled=state.stopped;$('stop-task').textContent=state.stopped?'Stopping…':'Stop';
   $('working-indicator').hidden=!state.running||!!state.pending;const current=state.steps?.at(-1);$('task-summary').textContent=state.stopped?(state.running?'Stopping…':'Stopped'):!state.running?(state.outcome===false?'Task ended · view activity':'Task complete · view activity'):state.pending?state.pending.summary:current?.kind==='planning'?(current.summary||'Choosing next action…'):current?.kind==='done'?'Checking results…':current?.summary||'Getting started…';
   renderTaskActivity(state);
@@ -931,7 +965,7 @@ $('capture-screen-preview').addEventListener('click', async event => {
   }
 });
 
-function appendTaskSteps(list, steps, showOutputs = false) {
+function appendTaskSteps(list, steps, showOutputs = false, showTime = false) {
   const labels = {running:'Running', done:'Completed', error:'Failed', denied:'Declined',
     approved:'Approved', review:'Review requested', rejected:'Rejected'};
   for (const step of steps) {
@@ -942,7 +976,14 @@ function appendTaskSteps(list, steps, showOutputs = false) {
     const result = step.kind === 'done' ? step.result : null;
     const outcome = typeof result?.exit_code === 'number' ? 'exit ' + result.exit_code
       : result?.window_title || result?.navigated_url || result?.opened;
-    line.textContent = [tool || step.approval ? label : null, tool, step.summary, outcome].filter(Boolean).join(' · ');
+    line.textContent = [tool || step.approval ? label : null, tool, step.summary, outcome, result?.timed_out && 'Timed out', result?.truncated && 'Output truncated'].filter(Boolean).join(' · ');
+    if (showTime && Number.isFinite(step.time)) {
+      const date = new Date(step.time * 1000);
+      const timestamp = document.createElement('time');
+      timestamp.dateTime = date.toISOString();
+      timestamp.textContent = date.toLocaleString();
+      line.prepend(timestamp);
+    }
     if (step.command) {
       const command = document.createElement('pre');
       command.className = 'tool-result action-command';
@@ -960,6 +1001,21 @@ function appendTaskSteps(list, steps, showOutputs = false) {
       const details = document.createElement('details');
       const title = document.createElement('summary');
       title.textContent = 'Output';
+      if (showTime && (typeof result.stdout === 'string' || typeof result.stderr === 'string')) {
+        title.textContent = 'Terminal output';
+        details.append(title);
+        for (const [label, output] of [['stdout', result.stdout], ['stderr', result.stderr]]) {
+          if (!output) continue;
+          const pre = document.createElement('pre');
+          pre.className = 'tool-result';
+          pre.textContent = output;
+          details.append(window.FabricChat.copyButton(output, 'Copy ' + label), pre);
+        }
+        if (details.childNodes.length === 1) details.append('No terminal output.');
+        line.append(details);
+        list.append(line);
+        continue;
+      }
       const pre = document.createElement('pre');
       pre.className = 'tool-result';
       pre.textContent = typeof result === 'string' ? result
@@ -1003,16 +1059,47 @@ $('auto-approve-actions').addEventListener('change',async()=>{try{await invoke('
 $('undo-mcp-removal').addEventListener('click',()=>action($('undo-mcp-removal'),async()=>{if(!removedMCP)return;const config=await invoke('mcp_config');if(Object.hasOwn(config.mcpServers,removedMCP.name))throw Error('A connection with that name already exists.');Object.defineProperty(config.mcpServers,removedMCP.name,{value:removedMCP.server,enumerable:true});await invoke('mcp_save',{config});removedMCP=null;$('undo-mcp-removal').hidden=true;await loadConnections();}));
 
 let selectedAgentTurn=null;
-function showAgentTab(agents){
-  $('context-overview-tab').setAttribute('aria-selected',String(!agents));
-  $('agent-structure-tab').setAttribute('aria-selected',String(agents));
-  $('context-overview').hidden=agents;
-  $('agent-structure').hidden=!agents;
-  if(agents && $('toggle-context').getAttribute('aria-pressed')==='false') $('toggle-context').click();
+function showContextTab(panel) {
+  for (const id of ['context-overview', 'agent-structure', 'context-logs']) {
+    $(id + '-tab').setAttribute('aria-selected', String(id === panel));
+    $(id).hidden = id !== panel;
+  }
+  if ($('toggle-context').getAttribute('aria-pressed') === 'false') $('toggle-context').click();
   renderAgentTree();
+  renderContextLogs();
 }
-$('context-overview-tab').addEventListener('click',()=>showAgentTab(false));
-$('agent-structure-tab').addEventListener('click',()=>{selectedAgentTurn=null;showAgentTab(true);});
+$('context-overview-tab').addEventListener('click', () => showContextTab('context-overview'));
+$('agent-structure-tab').addEventListener('click', () => {
+  selectedAgentTurn = null;
+  showContextTab('agent-structure');
+});
+$('context-logs-tab').addEventListener('click', () => showContextTab('context-logs'));
+$('logs-errors-only').addEventListener('change', renderContextLogs);
+
+function renderContextLogs() {
+  if ($('context-logs').hidden) return;
+  const list = $('context-log-list');
+  const errorsOnly = $('logs-errors-only').checked;
+  const saved = (conversationState.turns || []).flatMap(turn => turn.steps || []);
+  const live = chatBusy && taskState.running ? taskState.steps || [] : [];
+  const entries = visibleTaskSteps([...saved, ...live])
+    .filter(step => !errorsOnly || ['error', 'denied', 'rejected'].includes(step.kind)
+      || (typeof step.result?.exit_code === 'number' && step.result.exit_code !== 0)
+      || step.result?.timed_out)
+    .slice(-100).reverse();
+  const signature = JSON.stringify([conversationState.id, errorsOnly, entries]);
+  if (signature === lastLogSignature) return;
+  lastLogSignature = signature;
+  list.replaceChildren();
+  appendTaskSteps(list, entries, true, true);
+  if (!entries.length) {
+    const empty = document.createElement('p');
+    empty.className = 'chat-hint';
+    empty.textContent = errorsOnly ? 'No failed actions in this conversation.' : 'No task logs in this conversation yet.';
+    list.append(empty);
+  }
+}
+let lastLogSignature;
 function renderAgentTree(){
   const saved=selectedAgentTurn===null?conversationState.turns?.findLast(turn=>turn.role==='assistant'):conversationState.turns?.[selectedAgentTurn];
   const live=chatBusy && taskState.running && selectedAgentTurn===null;

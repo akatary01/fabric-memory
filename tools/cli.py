@@ -101,6 +101,8 @@ def main(root):
     commands=parser.add_subparsers(dest='command',required=True)
     run=commands.add_parser('run',help='Open the native Mac app')
     run.add_argument('--prepare',action='store_true',help='Prepare the Mac encoder and Python runtime');run.add_argument('--no-open',action='store_true',help='Build the Mac app without opening it');run.add_argument('--rebuild',action='store_true')
+    preview=commands.add_parser('preview',help='Serve the UI with sample data on localhost')
+    preview.add_argument('--port',type=int,default=4173)
     git=commands.add_parser('launch-git',help='Run only the Memory beacon')
     git.add_argument('--url',default='https://akatary.com/fabric-git',help='Public HTTPS beacon URL');git.add_argument('--bind',default='127.0.0.1');git.add_argument('--port',type=int,default=8766);git.add_argument('--name',default='akatary Memory beacon');git.add_argument('--data-dir',default=str(support()/'Beacon'));git.add_argument('--tls-cert');git.add_argument('--tls-key')
     git.add_argument('--invite',action='store_true',help='Refresh the pairing QR without restarting an existing beacon')
@@ -113,6 +115,9 @@ def main(root):
     cleanup.add_argument('--dry-run',action='store_true',help='Preview without moving files')
     args=parser.parse_args()
     try:
+        if args.command=='preview':
+            from preview import serve
+            serve(root,args.port);return
         if args.command=='package':
             from package_mac import package
             package(root,args.output,args.identity,args.notary_profile);return

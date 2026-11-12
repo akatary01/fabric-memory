@@ -163,7 +163,11 @@ impl Runner {
 
     pub fn step(&self, kind: &str, summary: &str, extra: Value) {
         if let Ok(mut t) = self.task.lock() {
-            let mut v = json!({"kind":kind,"summary":summary});
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let mut v = json!({"kind":kind,"summary":summary,"time":time});
             if let Some(extra) = extra.as_object() {
                 for (k, value) in extra {
                     v[k] = value.clone();
@@ -782,7 +786,11 @@ pub fn with_updates(prompt: &str, updates: &[String]) -> String {
 
 fn executed_command(tool: &str, args: &Value) -> String {
     if tool == "run_code" {
-        return args["command"].as_str().unwrap_or("").chars().take(4000).collect();
+        return args["command"].as_str().unwrap_or("").chars().take(16_000).collect();
+    }
+    if tool == "saved_tool" && args["action"] == "run" {
+        return format!("fabric-tools/{}.py {}", args["name"].as_str().unwrap_or(""), args["arguments"])
+            .chars().take(4_000).collect();
     }
     let mut display = args.clone();
     if let Some(fields) = display.as_object_mut() {
@@ -929,6 +937,11 @@ fn tool_receipt(tool: &str, value: &Value, raw: &str) -> Value {
     if tool == "computer" && value["ui"].is_string() {
         // Keep the same window and bounded controls the planner gets.
         return computer_observation(value);
+    }
+    if matches!(tool, "run_code" | "saved_tool") && value["exit_code"].is_number() {
+        // The workspace runner already caps each stream. Preserve its structured
+        // receipt so long terminal output cannot hide the exit code or stderr.
+        return value.clone();
     }
     if raw.len() > 24_000 {
         return json!({"text":raw.chars().take(24000).collect::<String>(),"truncated":true});
