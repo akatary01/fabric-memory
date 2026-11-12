@@ -266,6 +266,29 @@ fn relevant(query:&str,title:&str,snippet:&str)->bool {
     let evidence=format!("{title} {snippet}").to_lowercase();
     terms.iter().filter(|term|evidence.contains(**term)).count()>=2
 }
+pub fn research(question: &str) -> Result<Vec<Value>, String> {
+    if !urls(question).is_empty() {
+        return gather(question);
+    }
+    let model = std::env::var("FABRIC_WEB_MODEL").unwrap_or_else(|_| "lfm3-vl:latest".into());
+    let messages = json!([
+        {"role":"system","content":"Turn the request into one public search query. Keep the original topic, names and dates. Do not answer or add new facts. Return a JSON object with a query string."},
+        {"role":"user","content":question}
+    ]);
+    let schema = json!({"type":"object","required":["query"],"properties":{"query":{"type":"string"}}});
+    let query = crate::generation::request_model(&model, messages, Some(schema), 96, 12, "60s", 2048)
+        .ok().and_then(|response| serde_json::from_str::<Value>(response["text"].as_str()?).ok())
+        .and_then(|response| response["query"].as_str().map(str::trim).map(str::to_owned))
+        .filter(|query| !query.is_empty() && query.len() <= 240 && urls(query).is_empty()
+            && crate::privacy::classify(query).scope == "public");
+    let original = search_query(question);
+    let query = query.as_deref().unwrap_or(&original);
+    match gather_pages(query) {
+        Ok(pages) if pages.is_empty() && query != original => gather_pages(&original),
+        result => result,
+    }
+}
+
 pub fn gather(question: &str) -> Result<Vec<Value>, String> {
     search(question, false)
 }

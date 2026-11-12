@@ -34,7 +34,7 @@ def install_mac_app(root,binary,env):
         subprocess.run(['xcrun','swiftc','-O',str(root/'apps/mac/automation/ComputerUse.swift'),'-o',str(contents/'MacOS/fabric-computer-use')],check=True)
         shutil.copyfile(root/'apps/mac/icons/FabricMemory.icns',contents/'Resources/FabricMemory.icns')
         runtime_env={key:env[key] for key in ['FABRIC_ASSET_DIR','ORT_DYLIB_PATH','FABRIC_DATA_DIR','FABRIC_ENV_FILE','FABRIC_PYTHON'] if key in env}
-        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env}
+        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSMicrophoneUsageDescription':'Record microphone audio when you request a screen recording.','NSAudioCaptureUsageDescription':'Record system audio when you request a screen recording.','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env}
         (contents/'Info.plist').write_bytes(plistlib.dumps(info))
         subprocess.run(['xattr','-cr',str(stage)],check=True)
         subprocess.run(['codesign','--force','--sign','-',str(contents/'MacOS/fabric-computer-use')],check=True)
@@ -144,6 +144,10 @@ def main(root):
         bundled=(bool(installed) or ((candidate/'Contents/Resources/standalone.json').is_file() and stamp.is_file() and stamp.read_text()==fingerprint(root))) and not args.rebuild
         if sys.platform=='darwin' and not bundled:
             subprocess.run([sys.executable, str(root/'tools/local_llm.py')], cwd=root, check=True)
+            if not os.getenv('FABRIC_SEARCH_URL'):
+                result = subprocess.run([sys.executable, str(root/'tools/web_search.py')], cwd=root)
+                if result.returncode:
+                    print('Web search setup failed. Public links can still be read.', file=sys.stderr)
         env=environment(root);app=mac_app(root,env,args.rebuild)
         if not args.no_open:
             open_mac_app(app,env)

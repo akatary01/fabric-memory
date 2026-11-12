@@ -8,13 +8,13 @@ const DEPTH: usize = 2;
 pub struct Team {
     pub models: Vec<String>,
     next: AtomicUsize,
-    cloud_request: Option<String>,
+    cloud_request: Option<(String, String)>,
 }
 impl Team {
-    pub fn new(cloud_request: Option<&str>) -> Self {
+    pub fn new(cloud_request: Option<(&str, &str)>) -> Self {
         let mut models = crate::model_config::installed().unwrap_or_default();
         if models.is_empty() { models.push(crate::generation::model()); }
-        Self { models, next: AtomicUsize::new(0), cloud_request: cloud_request.map(str::to_owned) }
+        Self { models, next: AtomicUsize::new(0), cloud_request: cloud_request.map(|(request, tier)| (request.to_owned(), tier.to_owned())) }
     }
     pub fn available(&self) -> bool { self.next.load(Ordering::Relaxed) < LIMIT }
     pub fn tool(&self) -> Value {
@@ -29,15 +29,15 @@ impl Team {
     }
 
     pub fn run_cloud(&self, runner: &crate::agent::Runner, revision: usize) -> Result<Value, String> {
-        let task = self.cloud_request.as_deref().ok_or("Cloud advice is unavailable for this request.")?;
+        let (task, tier) = self.cloud_request.as_ref().ok_or("Cloud advice is unavailable for this request.")?;
         runner.check()?;
         if revision != 0 || runner.revised(revision) { return Err("The request changed. Cloud advice was skipped.".into()); }
         let slot = self.next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < LIMIT).then_some(n + 1))
             .map_err(|_| "The agent team used its four-worker budget.")?;
-        let tier = crate::routing::fallback(task).complexity;
-        let (model, _) = crate::cloud_models::select(task, &tier)?;
+        let (model, reason) = crate::cloud_models::select(task, tier)?;
         runner.check()?;
         if runner.revised(revision) { return Err("The request changed. Cloud advice was skipped.".into()); }
+        runner.step("done", &reason, json!({"phase":"model_selection","model":model}));
         let id = format!("cloud-{}", slot + 1);
         runner.agent_node(&id, Some("main"), &model, "running");
         let result = crate::cloud::advise(task, &model);

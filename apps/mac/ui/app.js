@@ -23,7 +23,7 @@ let switchingConversation=false;
 let taskState={running:false};
 let taskExpanded=false;
 
-for (const [id, values] of [['answer-mode', ['auto','local','cloud']]]) {
+for (const [id, values] of [['answer-mode', ['auto','local','cloud']], ['web-mode', ['auto','on','off']]]) {
   try { const value = localStorage.getItem(`fabric-${id}`); if (values.includes(value)) $(id).value = value; } catch {}
   $(id).addEventListener('change', () => {
     try { localStorage.setItem(`fabric-${id}`, $(id).value); } catch {}
@@ -347,7 +347,7 @@ $('prompt-form').addEventListener('submit', async event => {
   if ((!draft && !files.length) || !chatId || switchingConversation) return;
   const text = draft || 'Describe the attached files.';
 
-  const submission = {text, mode:$('answer-mode').value, web:'off', files};
+  const submission = {text, mode:$('answer-mode').value, web:$('web-mode').value, files};
   const run = activeRuns.get(chatId);
   conversationDrafts.delete(chatId);
   $('prompt').value = '';
@@ -394,7 +394,7 @@ function retryPrompt(text, attachments) {
     }
     return;
   }
-  queuePrompt(chatId, {text, mode: $('answer-mode').value, web: 'off', files: []});
+  queuePrompt(chatId, {text, mode: $('answer-mode').value, web: $('web-mode').value, files: []});
 }
 
 function renderPromptQueue() {
@@ -485,7 +485,7 @@ const palettes={
 function applyPaper(name){const p=palettes[name]||palettes.Paper;['--paper','--secondary','--accent','--ink','--muted'].forEach((key,i)=>document.documentElement.style.setProperty(key,`light-dark(${p[i]},${p[i+5]})`));$('paper-theme').value=name in palettes?name:'Paper';$('paper-theme').dispatchEvent(new Event('picker-update'));}
 try{applyPaper(localStorage.getItem('fabric-paper')||'Paper');}catch{applyPaper('Paper');}
 $('paper-theme').addEventListener('change',()=>{applyPaper($('paper-theme').value);try{localStorage.setItem('fabric-paper',$('paper-theme').value);}catch{}});
-function selectView(view){closePaperMenu();document.querySelector('.app').classList.toggle('settings-view',view!=='chat');$('active-view-title').textContent=({chat:conversationState.title||'Your conversation',memory:'Shared memory',connections:'Connections',devices:'Devices & sync',activity:'Activity',settings:'Settings'})[view]||view;document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==view);document.querySelectorAll('[data-view]').forEach(b=>{if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(view==='activity')loadActivity().catch(e=>message(e.message,true));if(view==='connections')loadConnections().catch(e=>message(e.message,true));if(view==='settings'){loadAgentSettings().catch(e=>message(e.message,true));loadModelStatus().catch(e=>message(e.message,true));loadCloudSettings().catch(e=>message(e.message,true));loadWorkspace().catch(e=>message(e.message,true));}if(view==='devices'){loadBeacon().catch(e=>message(e.message,true));loadDeviceUsage().catch(e=>message(e.message,true));}}
+function selectView(view){if(view!=='setup'&&document.querySelector('.app').classList.contains('onboarding'))return;closePaperMenu();document.querySelector('.app').classList.toggle('settings-view',view!=='chat');$('active-view-title').textContent=({chat:conversationState.title||'Your conversation',memory:'Shared memory',connections:'Connections',devices:'Devices & sync',activity:'Activity',settings:'Settings',setup:'Access & local models'})[view]||view;document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==view);document.querySelectorAll('[data-view]').forEach(b=>{if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(view==='activity')loadActivity().catch(e=>message(e.message,true));if(view==='connections'){loadConnections().catch(e=>message(e.message,true));loadComputerAccess().catch(e=>message(e.message,true));}if(view==='settings'){loadAgentSettings().catch(e=>message(e.message,true));loadModelStatus().catch(e=>message(e.message,true));loadCloudSettings().catch(e=>message(e.message,true));loadWorkspace().catch(e=>message(e.message,true));}if(view==='devices'){loadBeacon().catch(e=>message(e.message,true));loadDeviceUsage().catch(e=>message(e.message,true));}}
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>selectView(b.dataset.view)));
 $('focus-prompt').classList.add('conversation-action');
 $('focus-prompt').addEventListener('click',newConversation);
@@ -668,7 +668,7 @@ for(const select of document.querySelectorAll('select')){
     closePaperMenu();update();if(select.disabled)return;menu.hidden=false;trigger.setAttribute('aria-expanded','true');
     const rect=trigger.getBoundingClientRect();menu.style.minWidth=Math.max(110,rect.width)+'px';
     const height=menu.getBoundingClientRect().height;menu.style.left=Math.min(rect.left,window.innerWidth-menu.getBoundingClientRect().width-8)+'px';menu.style.top=(rect.bottom+height+6>window.innerHeight?Math.max(8,rect.top-height-4):rect.bottom+4)+'px';
-    choices[Math.max(0,index)]?.focus();closePaperMenu=()=>close();
+    (choices[index]?.disabled ? choices.find(choice=>!choice.disabled) : choices[Math.max(0,index)])?.focus({preventScroll:true});closePaperMenu=()=>close();
   }
   trigger.addEventListener('click',()=>menu.hidden?open():close());
   trigger.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();open();}});
@@ -677,7 +677,7 @@ for(const select of document.querySelectorAll('select')){
     if(event.key==='Escape'){event.preventDefault();close(true);}
     else if(event.key==='Tab'){close();trigger.focus();}
     else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
-      event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?choices.length-1:(index+(event.key==='ArrowDown'?1:-1)+choices.length)%choices.length;choices[next].focus();
+      event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?choices.length-1:(index+(event.key==='ArrowDown'?1:-1)+choices.length)%choices.length;choices[next]?.focus({preventScroll:true});
     }
   });
   document.addEventListener('pointerdown',event=>{if(!wrapper.contains(event.target))close();});
@@ -854,6 +854,21 @@ async function loadConnections(){
   $('mcp-status').textContent='Checking connections…';const servers=await invoke('mcp_catalog');$('mcp-status').textContent=servers.length?servers.filter(s=>s.status==='Connected').length+' connected · '+servers.length+' configured':'No servers configured';const list=$('mcp-servers');list.replaceChildren();
   for(const server of servers){const row=document.createElement('div');row.className='service-row mcp-server-row';const copy=document.createElement('div');copy.className='service-copy';const title=document.createElement('h2');title.textContent=server.name;const state=document.createElement('p');state.textContent=server.status==='Connected'?server.tools.length+' tools · '+server.resources.length+' resources · '+server.prompts.length+' prompts':server.status;copy.append(title,state);const browse=document.createElement('button');browse.className='text-button';browse.textContent='Browse';browse.disabled=server.status!=='Connected';browse.addEventListener('click',()=>browseMCP(server));const restart=document.createElement('button');restart.className='text-button';restart.textContent='Reconnect';restart.addEventListener('click',()=>action(restart,async()=>{await invoke('mcp_restart',{server:server.name});await loadConnections();}));const edit=document.createElement('button');edit.className='text-button';edit.textContent='Edit';edit.addEventListener('click',()=>openMCPConnection(server.name).catch(e=>message(e.message,true)));const remove=document.createElement('button');remove.className='text-button';remove.textContent='Remove';remove.addEventListener('click',()=>action(remove,async()=>{const config=await invoke('mcp_config');const previous=config.mcpServers[server.name];delete config.mcpServers[server.name];await invoke('mcp_save',{config});removedMCP={name:server.name,server:previous};$('undo-mcp-removal').hidden=false;await loadConnections();message('Connection removed. Undo is available.');}));const enabled=document.createElement('button');enabled.className='text-button';enabled.textContent=server.enabled?'Disable':'Enable';enabled.addEventListener('click',()=>action(enabled,async()=>{const config=await invoke('mcp_config');if(!config.mcpServers[server.name])throw Error('Connection no longer exists.');config.mcpServers[server.name].disabled=server.enabled;await invoke('mcp_save',{config});await loadConnections();}));row.append(copy,browse,edit,enabled,restart,remove);list.append(row);}
 }
+async function loadComputerAccess() {
+  const state = await invoke('computer_status');
+  const button = $('toggle-computer');
+  button.dataset.enabled = String(state.enabled);
+  button.textContent = state.enabled ? 'Disable' : 'Enable';
+  $('computer-state').textContent = !state.enabled ? 'Off' : state.accessibility ? 'Accessibility granted' : 'Needs Accessibility permission';
+}
+$('toggle-computer').addEventListener('click', event => action(event.currentTarget, async () => {
+  await invoke('computer_enable', {enabled: $('toggle-computer').dataset.enabled !== 'true'});
+  await loadComputerAccess();
+}));
+$('computer-permissions').addEventListener('click', event => action(event.currentTarget, async () => {
+  await invoke('computer_permissions', {control: true});
+  await loadComputerAccess();
+}));
 let removedMCP=null;
 let editingMCP=null,mcpSnapshot={mcpServers:{}},mcpTestRevision=0;
 function mcpTransport(){return document.querySelector('input[name="mcp-transport"]:checked').value;}
@@ -890,9 +905,20 @@ $('rename-form').addEventListener('submit',event=>{event.preventDefault();action
 $('cancel-rename').addEventListener('click',()=>$('rename-dialog').close());
 
 let cloudCatalogRequest=0;
-function fillCloudModels(models,pinned){const select=$('cloud-model');select.replaceChildren();const ids=[...new Set([pinned,...models].filter(Boolean))];for(const id of ids){const option=document.createElement('option');option.value=id;option.textContent=id+(models.length&&!models.includes(id)?' · unavailable':models.includes(id)?'':' · saved');option.disabled=!!models.length&&!models.includes(id);select.append(option);}select.value=models.length&&!models.includes(pinned)?models[0]:pinned||ids[0]||'';}
-async function loadCloudCatalog(refresh=false){const request=++cloudCatalogRequest;const state=await invoke('cloud_models',{refresh});if(request!==cloudCatalogRequest)return;fillCloudModels(state.models,$('cloud-model').value);$('cloud-model-pool').textContent=`${state.models.length} available models${state.stale?' · saved catalog; refresh to update':''}`;}
-async function loadCloudSettings(){cloudCatalogRequest++;const state=await invoke('cloud_settings');const providers=$('cloud-provider');providers.replaceChildren();for(const p of state.providers){const option=document.createElement('option');option.value=p.id;option.textContent=p.name;providers.append(option);}providers.value=state.provider_id;$('cloud-provider-endpoint').textContent=state.base_url;fillCloudModels([],state.model);$('cloud-automatic').checked=state.automatic;$('cloud-model').disabled=state.automatic;$('cloud-model-pool').textContent=state.last_selected?`Last selected: ${state.last_selected}`:'Save a token to discover available models.';$('cloud-enabled').checked=state.enabled;renderCloudCredential(state);loadAgentSettings().catch(()=>{});if(state.token_configured)loadCloudCatalog().catch(e=>{$('cloud-model-pool').textContent=e.message+' · saved model retained';});return state;}
+function fillCloudModels(models, pinned) {
+  const select = $('cloud-model');
+  select.replaceChildren();
+  for (const id of new Set([pinned, ...models].filter(Boolean))) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = models.includes(id) ? id : id + ' · saved';
+    select.append(option);
+  }
+  select.value = pinned || models[0] || '';
+  select.dispatchEvent(new Event('picker-update'));
+}
+async function loadCloudCatalog(refresh=false){const request=++cloudCatalogRequest;const state=await invoke('cloud_models',{refresh});if(request!==cloudCatalogRequest||state.provider_id&&state.provider_id!==$('cloud-provider').value)return;fillCloudModels(state.models,$('cloud-model').value);$('cloud-model-pool').textContent=`${state.models.length} available models${state.stale?' · saved catalog; refresh to update':''}`;}
+async function loadCloudSettings(){cloudCatalogRequest++;const state=await invoke('cloud_settings');const providers=$('cloud-provider');providers.replaceChildren();for(const p of state.providers){const option=document.createElement('option');option.value=p.id;option.textContent=p.name;providers.append(option);}providers.value=state.provider_id;$('cloud-provider-endpoint').textContent=state.base_url;fillCloudModels([],state.model);$('cloud-automatic').checked=state.automatic;$('cloud-model-pool').textContent=state.last_selected?`Last selected: ${state.last_selected}`:'Save a token to discover available models.';$('cloud-enabled').checked=state.enabled;renderCloudCredential(state);loadAgentSettings().catch(()=>{});if(state.token_configured)loadCloudCatalog().catch(e=>{$('cloud-model-pool').textContent=e.message+' · saved model retained';});return state;}
 function settingsTab(tab){for(const id of ['general','cloud']){$('settings-'+id).hidden=id!==tab;$('settings-'+id+'-tab').setAttribute('aria-selected',String(id===tab));}}
 for(const tab of ['general','cloud'])$('settings-'+tab+'-tab').addEventListener('click',()=>settingsTab(tab));
 $('add-cloud-provider').addEventListener('click',()=>{$('provider-form').hidden=false;$('provider-name').focus();});
@@ -906,7 +932,6 @@ async function loadLocalBeacon(){const state=await invoke('local_beacon_status')
 $('deploy-local-beacon').addEventListener('click',()=>action($('deploy-local-beacon'),async()=>{const previous=await invoke('beacon_settings');if(previous.connected&&!previous.local_owned&&!await confirmJoin('Switch this Mac to a new local memory beacon?'))return;$('local-beacon-state').textContent='Starting local beacon…';await invoke('local_beacon_deploy');await loadBeacon();await refresh();message('Local beacon deployed and connected. Use Add device to pair your phone on the same network.');}));
 $('stop-local-beacon').addEventListener('click',()=>action($('stop-local-beacon'),async()=>{await invoke('local_beacon_stop');await loadLocalBeacon();await refresh();message('Local beacon stopped. Saved memories are retained.');}));
 
-$('cloud-automatic').addEventListener('change',()=>{$('cloud-model').disabled=$('cloud-automatic').checked;});
 $('refresh-cloud-models').addEventListener('click',()=>action($('refresh-cloud-models'),()=>loadCloudCatalog(true)));
 async function loadWorkspace(){const state=await invoke('workspace_settings');$('workspace-path').value=state.path;}
 $('workspace-form').addEventListener('submit',event=>{event.preventDefault();action(event.submitter,async()=>{await invoke('workspace_save',{path:$('workspace-path').value.trim(),cloud_allowed:false});$('workspace-status').textContent='Workspace ready. Ask the agent to implement, run, or test your code.';});});
@@ -1132,7 +1157,7 @@ function renderAgentTree(){
 }
 
 function showPermissionState(computer){
-  $('setup-permission-status').textContent=`Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
+  $('setup-permission-status').textContent=`Accessibility: ${computer.accessibility?'granted':'not granted'} · Screen recording: ${computer.screen_recording?'granted':'not granted'}`;
 }
 function setupModels(state, preferred){
   const dropdown=$('setup-model');
@@ -1145,23 +1170,31 @@ function setupModels(state, preferred){
 async function openSetup(firstOnly=false){
   const state=await invoke('setup_state');
   if(firstOnly&&state.complete)return;
-  $('setup-title').textContent=state.complete?'Access & local models':'Set up fabric-memory';
+  document.querySelector('.app').classList.toggle('onboarding', !state.complete);
+  $('setup-title').textContent = state.complete ? 'Access & local models' : 'Set up fabric-memory';
+  $('setup-save').textContent = state.complete ? 'Save' : 'Continue';
+  $('setup-close').hidden = !state.complete;
   setupModels(state,state.model);
+  $('setup-control').checked=state.computer.enabled;
   $('setup-screen').checked=state.computer.screen_sharing;
   $('setup-workspace-enabled').checked=state.workspace.enabled;
   $('setup-workspace').value=state.workspace.path;
   showPermissionState(state.computer);
-  if(!$('local-setup').open)$('local-setup').showModal();
+  selectView('setup');
+  $('setup-title').focus();
 }
 $('open-setup').addEventListener('click',()=>action($('open-setup'),()=>openSetup()));
-$('setup-close').addEventListener('click',()=>$('local-setup').close());
+$('setup-close').addEventListener('click',()=>selectView('settings'));
 $('setup-refresh').addEventListener('click',()=>action($('setup-refresh'),async()=>setupModels(await invoke('setup_state'),$('setup-model').value)));
-$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>showPermissionState(await invoke('computer_permissions',{control:false,screen:$('setup-screen').checked}))));
+$('setup-permissions').addEventListener('click',()=>action($('setup-permissions'),async()=>showPermissionState(await invoke('computer_permissions',{control:$('setup-control').checked,screen:$('setup-screen').checked}))));
 $('local-setup-form').addEventListener('submit',event=>{
   event.preventDefault();
   action(event.submitter,async()=>{
-    await invoke('setup_save',{model:$('setup-model').value,control:false,screen:$('setup-screen').checked,workspace:$('setup-workspace-enabled').checked,path:$('setup-workspace').value.trim()});
-    $('local-setup').close();
+    await invoke('setup_save',{model:$('setup-model').value,control:$('setup-control').checked,screen:$('setup-screen').checked,workspace:$('setup-workspace-enabled').checked,path:$('setup-workspace').value.trim()});
+    const app = document.querySelector('.app');
+    const firstRun = app.classList.contains('onboarding');
+    app.classList.remove('onboarding');
+    selectView(firstRun ? 'chat' : 'settings');
     await Promise.all([loadWorkspace(),loadModelStatus(),loadConversation()]);
   });
 });

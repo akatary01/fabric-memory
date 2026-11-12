@@ -135,8 +135,78 @@ pub fn image_bytes(path: &str) -> Result<Vec<u8>, String> {
     }
     std::fs::read(file).map_err(|e| e.to_string())
 }
+pub fn recording_requested(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("record") && ["screen", "display", "video", "audio"].iter().any(|word| text.contains(word))
+}
+
+pub fn record(args: &Value, check: impl Fn() -> Result<(), String>) -> Result<Value, String> {
+    if !enabled() || !screen_sharing() {
+        return Err("Enable Computer use and Screen sharing before recording.".into());
+    }
+    if status()?["screen_recording"] != true {
+        return Err("Allow Screen Recording for fabric-memory in macOS System Settings.".into());
+    }
+    let seconds = args["seconds"].as_u64().filter(|seconds| (1..=60).contains(seconds))
+        .ok_or("Choose a recording duration from 1 to 60 seconds.")?;
+    let audio = args["audio"].as_str().unwrap_or("none");
+    let audio_flag = match audio {
+        "none" => None, "microphone" => Some("-g"), "system" => Some("-A"),
+        _ => return Err("Choose none, microphone, or system audio.".into()),
+    };
+    let workspace = crate::workspace::settings();
+    if workspace["enabled"] != true {
+        return Err("Enable workspace access to save a recording.".into());
+    }
+    let root = PathBuf::from(workspace["path"].as_str().ok_or("Select a workspace first.")?);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_millis();
+    let folder = root.join(format!("screen-recording-{stamp}"));
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(&folder).map_err(|e| e.to_string())?;
+    let output = folder.join("screen.mov");
+    let result = (|| {
+        check()?;
+        let timeout = crate::agent::bounded_timeout(seconds + 10)?;
+        if timeout.as_secs() <= seconds { return Err("The task has too little time left to record.".into()); }
+        let mut command = Command::new("/usr/sbin/screencapture");
+        command.args(["-v", "-x", "-D", "1", "-V", &seconds.to_string()]);
+        if let Some(flag) = audio_flag { command.arg(flag); }
+        let mut child = command.arg(&output).stdin(Stdio::null()).stdout(Stdio::null())
+            .stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+        let started = std::time::Instant::now();
+        loop {
+            let poll = check().and_then(|_| {
+                if started.elapsed() >= timeout { return Err("Screen recording timed out.".into()); }
+                child.try_wait().map_err(|e| e.to_string())
+            });
+            match poll {
+                Ok(Some(status)) if status.success() => break,
+                Ok(Some(_)) => return Err("macOS could not record the screen. Check screen and audio permissions.".into()),
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
+            }
+        }
+        let tracks = helper(&json!({"action":"recording_info","path":output}))?;
+        if tracks["video"] != true || (audio_flag.is_some() && tracks["audio"] != true) {
+            return Err("The recording is missing a requested video or audio track. Check macOS permissions and the selected audio input.".into());
+        }
+        Ok(json!({"executed_action":"record","path":output,"seconds":seconds,"audio":audio,"video":true}))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&output);
+        let _ = std::fs::remove_dir(&folder);
+    }
+    result
+}
+
 pub fn tool() -> Value {
-    json!({"name":"computer","description":"Control this Mac. resolve_app accepts an installed app name or bundle ID; app=browser or web resolves the default browser. open_app accepts those same names. search_browser opens a Google query in the actual default browser (query parameter); open_url navigates an HTTP/HTTPS URL. To target Chrome specifically, pass app=chrome and new_tab=true. Set new_tab=true on each search_browser or open_url call when the user asks for separate tabs. Use a distinct query or URL per requested tab. Navigation dispatch does not confirm page load; observe the resolved browser to verify. Observe the window after navigation to verify the page. First observe before clicking or typing; observations return element paths. click with element plus expected label, or screen_x/screen_y (0 to 1 from the top-left of the main display screenshot); type into a focused field; key with Cmd+A etc; scroll; open_app by bundle ID. screenshot captures the screen for user review. Requires macOS permissions.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["observe","resolve_app","open_url","search_browser","click","type","key","scroll","open_app","screenshot"]},"app":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"new_tab":{"type":"boolean"},"element":{"type":"string"},"expected":{"type":"string"},"screen_x":{"type":"number","minimum":0,"maximum":1},"screen_y":{"type":"number","minimum":0,"maximum":1},"text":{"type":"string"},"key":{"type":"string"},"pixels":{"type":"integer"}},"required":["action"]}})
+    json!({"name":"computer","description":"Control this Mac. resolve_app accepts an installed app name or bundle ID; app=browser or web resolves the default browser. open_app accepts those same names. search_browser opens a Google query in the actual default browser (query parameter); open_url navigates an HTTP/HTTPS URL. To target Chrome specifically, pass app=chrome and new_tab=true. Set new_tab=true on each search_browser or open_url call when the user asks for separate tabs. Use a distinct query or URL per requested tab. Navigation dispatch does not confirm page load; observe the resolved browser to verify. Observe the window after navigation to verify the page. First observe before clicking or typing; observations return element paths. click with element plus expected label, or screen_x/screen_y (0 to 1 from the top-left of the main display screenshot); type into a focused field; key with Cmd+A etc; scroll; open_app by bundle ID. screenshot captures the screen for user review. For an explicit recording request, record the main display for 1–60 seconds with audio none, microphone, or system. Requires macOS permissions.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["observe","resolve_app","open_url","search_browser","click","type","key","scroll","open_app","screenshot","record"]},"seconds":{"type":"integer","minimum":1,"maximum":60},"audio":{"type":"string","enum":["none","microphone","system"]},"app":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"new_tab":{"type":"boolean"},"element":{"type":"string"},"expected":{"type":"string"},"screen_x":{"type":"number","minimum":0,"maximum":1},"screen_y":{"type":"number","minimum":0,"maximum":1},"text":{"type":"string"},"key":{"type":"string"},"pixels":{"type":"integer"}},"required":["action"]}})
 }
 
 pub fn search_tab_count(question: &str) -> Option<usize> {
@@ -287,6 +357,12 @@ pub fn observed_page(result: &Value, expected: &str) -> bool {
 }
 
 pub fn check_task_outcome(question:&str,steps:&Value)->Result<(),String>{
+ if recording_requested(question) && !steps.as_array().into_iter().flatten().any(|step|
+     step["tool"] == "computer" && step["kind"] == "done" && step["result"]["executed_action"] == "record"
+ ) {
+    return Err("Screen recording has not completed. Use the record action and verify the saved file.".into());
+ }
+
  check_outcome(steps)?;
  let completed: Vec<_> = steps.as_array().into_iter().flatten()
      .filter(|step| step["tool"] == "computer" && step["kind"] == "done").collect();

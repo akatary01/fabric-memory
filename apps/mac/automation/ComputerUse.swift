@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ApplicationServices
 import Foundation
 import PDFKit
@@ -192,6 +193,12 @@ func run(_ args:[String:Any])throws->[String:Any]{
  if action == "device_usage" {
   let directory = ProcessInfo.processInfo.environment["FABRIC_DATA_DIR"] ?? NSHomeDirectory()
   return sampleDeviceUsage(at: directory)
+ }
+ if action=="recording_info" {
+  guard let path = args["path"] as? String else { throw ToolError("Missing recording path.") }
+  let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+  return ["video": !asset.tracks(withMediaType: .video).isEmpty,
+          "audio": !asset.tracks(withMediaType: .audio).isEmpty]
  }
  if action=="permissions"{return ["accessibility":AXIsProcessTrusted(),"screen_recording":CGPreflightScreenCaptureAccess()]}
  if action=="request_permissions"{

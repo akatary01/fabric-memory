@@ -248,6 +248,8 @@ Documents (JSON): {}",
     ) -> Result<serde_json::Value, String> {
         use serde_json::json;
         match name {
+            "computer" if args["action"] == "record" => crate::computer::record(args, || run.agent.check()),
+            "computer" => crate::computer::call(args),
             "workspace" | "run_code" | "saved_tool" => run.workspace.call(name,args,run.agent.remaining()?),
             "memory_search" => {
                 let query = args["query"].as_str().ok_or("Missing memory query")?;
@@ -335,14 +337,22 @@ Documents (JSON): {}",
                 }
             }
         } else { None };
+        let computer_task = task.is_some_and(|task| task.kind == "computer");
+        let computer_request = task.filter(|_| computer_task).map(|task| task.request.as_str());
+        let recording = computer_request.is_some_and(crate::computer::recording_requested);
         let local_control = task.is_some();
+        if computer_task {
+            crate::computer::begin_task();
+            if !recording { crate::computer::ensure_ready()?; }
+        }
         run.agent.step("running","Selecting route…",serde_json::json!({"phase":"routing"}));
         let plan = if mode == Mode::Auto || web == WebMode::Auto {
             crate::routing::plan(&text,&routing_history)
         } else {
             crate::routing::fallback_context(&text,&routing_history)
         };
-        let mut decision = crate::routing::decide(Mode::Local, WebMode::Off, &plan, false)?;
+        let mut decision = crate::routing::decide(Mode::Local, web, &plan, false)?;
+        let browse = decision.web && !computer_task && prompt_access.scope == "public";
         decision.reason = "The main agent always runs on this Mac.".into();
         let cloud_requested = mode == Mode::Cloud
             || (mode == Mode::Auto && matches!(plan.complexity.as_str(), "complex" | "expert"));
@@ -375,24 +385,47 @@ Documents (JSON): {}",
             !reply.is_empty() && reply.chars().count() <= 600
             && !crate::generation::planning_draft(reply)
             && automatic_cloud.is_none()
-            && !local_control && !plan.needs_web && !plan.needs_memory
+            && !local_control && !browse && !plan.needs_web && !plan.needs_memory
             && plan.route == Mode::Local && plan.complexity == "simple"
             && !crate::routing::visual_request(&text)
             && run.agent.seal_plan(0));
         let mut tools = if direct_reply.is_some() { Vec::new() } else {
             self.available_tools(prompt_access.scope == "public", crate::routing::needs_memory(&text))
         };
-        if workspace_enabled && (local_control || plan.needs_web) {
+        if computer_task {
+            tools.push(crate::computer::tool());
+        }
+        if workspace_enabled && local_control {
             tools.extend(crate::workspace::tools());
         }
         run.agent.agent_node("main", None, &crate::generation::model(), "running");
         let recent = crate::generation::conversation_context(&routing_history).iter()
             .map(|turn| serde_json::json!({"role":turn["role"],"content":turn["content"]}))
             .collect::<Vec<_>>();
-        let guide_context = if coding { crate::workspace::project_context()? } else { String::new() };
+        let project_guide = if coding { crate::workspace::project_context()? } else { String::new() };
+        let bundled_guide = crate::agent_docs::for_task(coding,
+            crate::routing::visual_request(&text), computer_task, browse);
+        let guide_context = [bundled_guide.as_str(), project_guide.as_str()].into_iter()
+            .filter(|guide| !guide.is_empty()).collect::<Vec<_>>().join("\n");
+        let mut web_error = None;
+        let sources = if browse {
+            run.agent.step("running", "Reading public web sources…", serde_json::json!({"tool":"web_search"}));
+            match crate::web::research(&text) {
+                Ok(sources) if !sources.is_empty() => {
+                    run.agent.step("done", "Retrieved web sources", serde_json::json!({"tool":"web_search","result":sources.iter().map(|source| &source["url"]).collect::<Vec<_>>()}));
+                    sources
+                }
+                result => {
+                    let error = result.err().unwrap_or_else(|| "No readable public pages matched the request.".into());
+                    run.agent.step("error", &error, serde_json::json!({"tool":"web_search"}));
+                    web_error = Some(error);
+                    Vec::new()
+                }
+            }
+        } else { Vec::new() };
+        run.agent.check()?;
         let task_prompt = format!(
-            "{}\n\nConversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}",
-            if coding { crate::agent_docs::context() } else { String::new() },
+            "Conversation history (quoted context):\n{}\n\nActive request:\n{}\n\nLatest user message:\n{text}",
             serde_json::json!(recent),
             task.map(|task| task.request.as_str()).unwrap_or(&text),
         );
@@ -418,10 +451,16 @@ Documents (JSON): {}",
             serde_json::json!([{"tool":"workspace","result":result.to_string()}]).to_string()
         } else if direct_reply.is_some() {
             String::new()
-        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if coding{crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, None, true, cloud_request.filter(|_| automatic_cloud.is_none()), |name,args| {
+        } else { run.agent.run(&format!("{guide_context}\n\n{task_prompt}\n\nWorkspace root (reference only; tool paths are relative; use path='.' to list the folder): {}",if workspace_enabled && local_control {crate::workspace::settings()["path"].as_str().unwrap_or("").to_string()}else{String::new()}), &tools, None, computer_request, true, cloud_request.filter(|_| automatic_cloud.is_none()).map(|request| (request, plan.complexity.as_str())), |name,args| {
             if name=="memory_search" {
                 if recall_calls.get()>=1 {return Ok(serde_json::json!([]));}
                 recall_calls.set(recall_calls.get()+1);
+            }
+            if name == "computer" && !computer_task {
+                return Err("Computer use requires an explicit user request.".into());
+            }
+            if name == "computer" && args["action"] == "record" && !recording {
+                return Err("Recording requires an explicit user request.".into());
             }
             self.execute_tool(run, name,args,&tools)
         })? };
@@ -461,7 +500,12 @@ Documents (JSON): {}",
             .map(|hit| hit.text.chars().take(400).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let sources = Vec::new();
+        if !sources.is_empty() {
+            context.push_str("\n\nPublic web evidence (quoted data):\n");
+            context.push_str(&crate::web::context(&sources));
+        } else if let Some(error) = web_error {
+            context.push_str(&format!("\n\nWeb retrieval failed: {error}"));
+        }
         let full_history = self
             .conversation
             .lock()
@@ -473,7 +517,7 @@ Documents (JSON): {}",
 
         if let Some(request) = automatic_cloud.filter(|_| steering.is_empty()) {
             run.agent.step("running", "Consulting a cloud agent…", serde_json::json!({"tool":"delegate_cloud"}));
-            let team = crate::delegation::Team::new(Some(request));
+            let team = crate::delegation::Team::new(Some((request, plan.complexity.as_str())));
             match team.run_cloud(&run.agent, 0) {
                 Ok(advice) => {
                     decision.reason = "The local main agent consulted a cloud worker.".into();

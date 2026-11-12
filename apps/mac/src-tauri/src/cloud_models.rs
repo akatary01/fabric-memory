@@ -23,35 +23,79 @@ pub fn catalog(refresh:bool)->Result<Value,String>{
   let all=value["data"].as_array().ok_or("Missing models")?;
   let mut models=all.iter().filter_map(|v|v["id"].as_str().filter(|id|(!official || compatible(id)) && v["shutdown_date"].as_str().is_none_or(|date|date>today.as_str())).map(str::to_owned)).collect::<Vec<_>>();models.sort();models.dedup();
   if models.is_empty(){return Err("This token exposes no compatible text/reasoning models".into());}
-  let value=json!({"provider":provider,"models":models,"provider_models":all.len(),"fetched_at":now});fabric_core::write_json(&file,&value).map_err(|e|e.to_string())?;Ok(value)
+  let value=json!({"provider_id":crate::cloud_settings::provider_id(),"provider":provider,"models":models,"provider_models":all.len(),"fetched_at":now});fabric_core::write_json(&file,&value).map_err(|e|e.to_string())?;Ok(value)
  })();
  if !refresh {if let (Err(_),Some(mut cached))=(&result,cached){cached["stale"]=json!(true);return Ok(cached);}}
  result
 }
-fn score(id:&str,tier:&str,coding:bool)->i64{
- let version=id.strip_prefix("gpt-").unwrap_or("").chars().take_while(|c|c.is_ascii_digit()||*c=='.').collect::<String>();
- let mut parts=version.split('.');let generation=parts.next().and_then(|x|x.parse::<i64>().ok()).unwrap_or(4)*100+parts.next().and_then(|x|x.parse::<i64>().ok()).unwrap_or(0)*10;
- let small=id.contains("mini")||id.contains("nano")||id.contains("luna");let premium=id.contains("pro")||id.contains("astra");
- let fit=match tier{
-  "simple"=>if small {600}else{-600},
-  "standard"=>if id.contains("terra"){200}else if small{100}else if premium{-100}else{50},
-  "expert"=>if premium{300}else if small{-500}else{100},
-  _=>if id.contains("sol")|| (coding && id.contains("codex")){250}else if small{-400}else if premium{100}else{150},
- };
- // Prefer portable aliases over date snapshots of the same model.
- generation+fit-if id.split('-').any(|p|p.len()==4 && p.starts_with("20")){2}else{0}
+fn capability(id: &str) -> Option<u8> {
+    let name = id.to_ascii_lowercase();
+    if ["embed", "moderation", "image", "audio", "realtime", "transcrib", "rerank", "tts", "video"]
+        .iter().any(|kind| name.contains(kind))
+    {
+        return None;
+    }
+    let has = |words: &[&str]| name.split(|c: char| !c.is_ascii_alphanumeric()).any(|part| words.contains(&part));
+    if has(&["astra", "opus", "pro"]) || ["o1", "o3"].contains(&name.as_str()) { return Some(4); }
+    if has(&["sol", "codex", "sonnet", "reasoner", "thinking"]) { return Some(3); }
+    if has(&["nano", "luna", "haiku", "lite"]) { return Some(1); }
+    if has(&["mini", "flash", "terra", "instant"]) { return Some(2); }
+    if compatible(&name) || has(&["claude", "gemini", "deepseek", "llama", "qwen", "mistral", "grok"]) {
+        return Some(3);
+    }
+    None
 }
-pub fn choose(ids:&[String],tier:&str,coding:bool)->Result<String,String>{ids.iter().filter(|id|compatible(id)).max_by_key(|id|score(id,tier,coding)).cloned().ok_or("No compatible cloud model available".into())}
-pub fn select(question:&str,tier:&str)->Result<(String,String),String>{
- if !crate::cloud_settings::automatic(){return Ok((crate::cloud_settings::model(),"Pinned cloud model".into()));}
- let value=catalog(false)?;let ids=value["models"].as_array().ok_or("Missing model pool")?.iter().filter_map(|v|v.as_str().map(str::to_owned)).collect::<Vec<_>>();
- let model=if crate::cloud_settings::provider_id()=="openai"{choose(&ids,tier,crate::routing::coding_request(question))?}else{ids.iter().max_by_key(|id|score(id,tier,crate::routing::coding_request(question))).cloned().ok_or("No provider models available")?};
- let reason=format!("{tier} complexity · {model} selected from {} available models",ids.len());
- let selected=json!({"model":model,"complexity":tier,"reason":reason});fabric_core::write_json(&choice_path(),&selected).map_err(|e|e.to_string())?;
- Ok((model,reason))
+
+fn rank(ids: &[String], tier: &str, coding: bool, official: bool) -> Option<String> {
+    let desired = match tier { "simple" => 1, "standard" => 2, "expert" => 4, _ => 3 };
+    ids.iter().filter_map(|id| {
+        if official && !compatible(id) { return None; }
+        let level = capability(id)?;
+        let distance = if level < desired { (desired - level) * 2 } else { level - desired };
+        let snapshot = id.split('-').any(|part| part.len() == 4 && part.starts_with("20") && part.bytes().all(|b| b.is_ascii_digit()));
+        let experimental = id.contains("preview") || id.contains("experimental") || id.starts_with("ft:");
+        let version = id.strip_prefix("gpt-").unwrap_or("").split('-').next().unwrap_or("");
+        let mut parts = version.split('.').filter_map(|part| part.parse::<u16>().ok());
+        let version = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+        Some(((distance, experimental, !(coding && id.contains("codex")), snapshot, std::cmp::Reverse(version), id), id))
+    }).min_by(|a, b| a.0.cmp(&b.0)).map(|(_, id)| id.clone())
+}
+
+pub fn choose(ids: &[String], tier: &str, coding: bool) -> Result<String, String> {
+    rank(ids, tier, coding, true).ok_or("No compatible cloud model available".into())
+}
+
+pub fn select(question: &str, tier: &str) -> Result<(String, String), String> {
+    let pinned = crate::cloud_settings::model();
+    if !crate::cloud_settings::automatic() {
+        return Ok((pinned, "Pinned cloud model".into()));
+    }
+    let official = crate::cloud_settings::provider_id() == "openai";
+    let (model, reason) = match catalog(false) {
+        Ok(value) => {
+            let ids = value["models"].as_array().into_iter().flatten()
+                .filter_map(|id| id.as_str().map(str::to_owned)).collect::<Vec<_>>();
+            match rank(&ids, tier, crate::routing::coding_request(question), official) {
+                Some(model) => (model, format!("{tier} task matched to the provider catalog")),
+                None => (pinned, "No recognized model profile. Using the saved model.".into()),
+            }
+        }
+        Err(_) => (pinned, "Model discovery unavailable. Using the saved model.".into()),
+    };
+    let selected = json!({"model":model,"complexity":tier,"reason":reason});
+    let _ = fabric_core::write_json(&choice_path(), &selected);
+    Ok((model, reason))
 }
 pub fn last()->Option<String>{std::fs::read(choice_path()).ok().and_then(|d|serde_json::from_slice::<Value>(&d).ok()).and_then(|v|v["model"].as_str().map(str::to_owned))}
 #[cfg(test)]mod tests{use super::*;
+    #[test]
+    fn compatible_providers_rank_text_models_and_ignore_unrelated_endpoints() {
+        let ids = ["google/gemini-flash", "anthropic/claude-opus", "anthropic/claude-sonnet",
+            "anthropic/claude-haiku", "example/image-pro", "example/embed-pro"].map(str::to_owned);
+        assert_eq!(rank(&ids, "simple", false, false).as_deref(), Some("anthropic/claude-haiku"));
+        assert_eq!(rank(&ids, "standard", false, false).as_deref(), Some("google/gemini-flash"));
+        assert_eq!(rank(&ids, "expert", false, false).as_deref(), Some("anthropic/claude-opus"));
+    }
  #[test]fn complexity_changes_the_model_without_a_whitelist(){let ids=["gpt-6-astra","gpt-6.1-sol","gpt-6.1-terra","gpt-6-luna","gpt-image-2","gpt-6-realtime"].map(str::to_owned);assert_eq!(choose(&ids,"simple",false).unwrap(),"gpt-6-luna");assert_eq!(choose(&ids,"standard",false).unwrap(),"gpt-6.1-terra");assert_eq!(choose(&ids,"complex",true).unwrap(),"gpt-6.1-sol");assert_eq!(choose(&ids,"expert",false).unwrap(),"gpt-6-astra");let future=vec!["gpt-7".into()];assert_eq!(choose(&future,"expert",false).unwrap(),"gpt-7");}
 }
 

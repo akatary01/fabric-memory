@@ -126,3 +126,14 @@ button:not(.primary):focus-visible{background:var(--soft)}
 .wordmark{display:inline-flex;align-items:center;justify-content:center;gap:7px}.wordmark img{width:18px;height:18px}
 
 .logs-filter{display:flex;align-items:center;gap:6px;color:var(--muted);margin:10px 0} .logs-filter input{width:auto;margin:0} #context-log-list .step-line{border-top:1px solid var(--line);padding:8px 0;line-height:1.5} #context-log-list time{display:block;color:var(--muted)}
+
+#local-setup-form{width:min(100%,520px);margin:12px auto 24px}
+#local-setup-form fieldset{margin:0 0 16px;padding:10px 0;border:0;border-bottom:1px solid var(--line)}
+#local-setup-form legend{font-size:12px;font-weight:600;padding:0}
+#local-setup-form .paper-select{display:flex;margin:5px 0}
+#local-setup-form .paper-select-trigger{width:100%}
+#local-setup-form .approval-device{margin:7px 0}
+#local-setup-form input:not([type=checkbox]){margin-top:5px}
+.app.onboarding .sidebar,.app.onboarding .content-topbar,.app.onboarding footer,.app.onboarding .titlebar-tools,.app.onboarding #beacon-warning{display:none}
+.app.onboarding .workspace{grid-column:1/-1;grid-row:2/-1}
+.app.onboarding .titlebar .wordmark{grid-column:2}

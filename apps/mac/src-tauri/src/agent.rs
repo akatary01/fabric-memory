@@ -301,7 +301,7 @@ impl Runner {
         cloud_model: Option<&str>,
         completion_task:Option<&str>,
         allow_team: bool,
-        cloud_request: Option<&str>,
+        cloud_request: Option<(&str, &str)>,
         execute: impl Fn(&str, &Value) -> Result<Value, String>,
     ) -> Result<String, String> {
         if cloud_model.is_some(){return Err("Cloud action delegation is disabled. Tool planning must use the local model.".into());}

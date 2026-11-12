@@ -35,16 +35,19 @@ pub fn prepare() -> Result<Option<Child>, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&manifest)?;
     let tag="latest";
     if !manifest.join(tag).exists() { std::fs::copy(seed.join("manifests/registry.ollama.ai/library/lfm3-vl").join(tag),manifest.join(tag))?; }
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    std::env::set_var("FABRIC_LOCAL_ENDPOINT", format!("http://127.0.0.1:{port}"));
-    drop(listener);
+    // Allocate private ports, avoiding the recipient's existing Ollama/search services.
+    let llm = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let search = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let lp=llm.local_addr()?.port(); let sp=search.local_addr()?.port();
+    std::env::set_var("FABRIC_LOCAL_ENDPOINT", format!("http://127.0.0.1:{lp}"));
+    std::env::set_var("FABRIC_SEARCH_URL", format!("http://127.0.0.1:{sp}"));
+    drop(llm); drop(search);
     let mut child=Command::new(runtime.join("python/bin/python3"))
         .args(["-B", "-c", include_str!("../../../../tools/packaged_services.py")])
-        .arg(&resources).arg(&data).arg(port.to_string())
+        .arg(&resources).arg(&data).arg(lp.to_string()).arg(sp.to_string())
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn()?;
     let mut line=String::new();
     BufReader::new(child.stdout.take().ok_or("Missing service output")?).read_line(&mut line)?;
-    if line.trim()!="ready" { return Err("Bundled model service could not start. See the app Logs folder.".into()); }
+    if line.trim()!="ready" { return Err("Bundled model/search services could not start. See the app Logs folder.".into()); }
     Ok(Some(child))
 }

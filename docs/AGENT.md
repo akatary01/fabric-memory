@@ -33,6 +33,10 @@ Configuration and credentials stay in a private local file. `roots` advertises w
 
 The agent reviews MCP calls before execution. Local memory reads run directly. Stop cancels pending reviews, sends cancellation notifications to active MCP sessions, and prevents further steps. An external action already dispatched may finish.
 
+## Built-in web and computer access
+
+Choose Web in the composer to control public research. Computer use is in Connections. The selected workspace, screen capture, and macOS permissions are in Access & local models. The agent uses the relevant guides for coding, visualization, computer actions, recording, and web research.
+
 ## User tools
 
 Add integrations in Connections through MCP. To create a reusable Python helper, ask the agent to build and test one in the selected workspace. Helpers live in `fabric-tools/`. You can also put your own Python scripts there.
