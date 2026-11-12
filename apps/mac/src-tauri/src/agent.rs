@@ -256,6 +256,38 @@ impl Runner {
         self.wake.notify_all();
         Ok(())
     }
+    fn ask_user(&self, question: &str, revision: usize) -> Result<(), String> {
+        self.check()?;
+        let mut task = self.task.lock().map_err(|_| "Agent unavailable")?;
+        if task.updates.len() != revision {
+            return Ok(());
+        }
+        let started = Instant::now();
+        task.accepting_updates = true;
+        task.pending = Some(json!({"kind":"question","summary":question}));
+        let result = loop {
+            if self.stopped.load(Ordering::Relaxed) {
+                break Err("Task stopped".into());
+            }
+            if task.updates.len() != revision {
+                break Ok(());
+            }
+            if started.elapsed() >= Duration::from_secs(600) {
+                break Err("The question timed out. Reply in chat to continue.".into());
+            }
+            task = self.wake.wait_timeout(task, Duration::from_secs(1))
+                .map_err(|_| "Agent unavailable")?.0;
+        };
+        task.pending = None;
+        if let Some(deadline) = &mut task.deadline {
+            *deadline += started.elapsed();
+            if REQUEST_DEADLINE.get().is_some() {
+                REQUEST_DEADLINE.set(Some(*deadline));
+            }
+        }
+        result
+    }
+
     fn automatic_review(&self,tool:&str,summary:&str)->Result<bool,String>{self.check()?;self.step("approved",summary,json!({"tool":tool,"approval":"automatic"}));Ok(true)}
     #[cfg(test)]
     fn review(&self, tool: &str, args: &Value, summary: &str) -> Result<bool, String> {
@@ -310,6 +342,13 @@ impl Runner {
         if tools.is_empty() && !has_team { return Ok(String::new()); }
         if has_team || cloud_model.is_some() || completion_task.is_some_and(|t|t.starts_with("[blender] ") ) || tools.iter().any(|tool| tool["name"] == "computer") || crate::model_config::supports_tools() {
             let mut tools = tools.to_vec();
+            if allow_team {
+                tools.push(json!({
+                    "name":"ask_user",
+                    "description":"Pause and ask one focused question when a missing decision or new live observation blocks progress. Explain what you need to know. The user's reply resumes this same task. Use this before guessing what to do with ambiguous live input. Use regular action review for approvals.",
+                    "inputSchema":{"type":"object","additionalProperties":false,"required":["question"],"properties":{"question":{"type":"string","maxLength":500}}}
+                }));
+            }
             if let Some(team) = &team {
                 tools.push(team.tool());
                 tools.extend(team.cloud_tool());
@@ -437,6 +476,7 @@ impl Runner {
         let vision = tools.iter().any(|tool|tool["name"]=="computer") && crate::computer::screen_sharing() && crate::model_config::supports_vision();
         let mut screen: Option<String> = None;
         let mut cloud_attempted = false;
+        let mut asked_questions = std::collections::HashSet::new();
         'planning: for _ in 0..64 {
             self.check()?;
             let updates = self.updates();
@@ -662,6 +702,19 @@ impl Runner {
                         }
                         args["require_link"] = json!(true);
                     }
+                }
+                if name == "ask_user" {
+                    let question = args["question"].as_str().unwrap_or("").trim();
+                    if question.is_empty() || question.len() > 500 || !asked_questions.insert(question.to_owned()) {
+                        let error = "Ask one new, focused question under 500 bytes. Use the user's previous reply when available.";
+                        observations.push(json!({"tool":name,"result":error}));
+                        messages.push(json!({"role":"tool","tool_name":alias,"tool_call_id":call["id"],"content":error}));
+                        continue;
+                    }
+                    self.step("running", question, json!({"tool":name,"phase":"user_input"}));
+                    observations.push(json!({"tool":name,"question":question}));
+                    self.ask_user(question, revision)?;
+                    continue 'planning;
                 }
                 let mut summary=action_label(name,&args);
                 let cloud_mcp=cloud_model.is_some() && name.starts_with("mcp::");
@@ -1082,5 +1135,29 @@ mod budget_tests {
             assert!(bounded_timeout(90).is_err());
         }
         assert_eq!(bounded_timeout(90).unwrap(), Duration::from_secs(90));
+    }
+}
+
+#[cfg(test)]
+mod live_question_tests {
+    use super::*;
+
+    #[test]
+    fn reply_to_a_live_question_revises_the_current_task() {
+        let runner = std::sync::Arc::new(Runner::default());
+        runner.start().unwrap();
+        let agent = runner.clone();
+        let worker = std::thread::spawn(move || agent.ask_user("Which folder should I use?", 0));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runner.status()["pending"]["kind"] != "question" && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(runner.status()["pending"]["summary"], "Which folder should I use?");
+        assert!(runner.approve(0, true).is_err());
+        runner.steer("Use Downloads").unwrap();
+        worker.join().unwrap().unwrap();
+        assert!(runner.status()["pending"].is_null());
+        assert!(runner.revised(0));
+        assert_eq!(runner.updates(), ["Use Downloads"]);
     }
 }

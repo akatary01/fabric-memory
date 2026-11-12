@@ -49,33 +49,22 @@ for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','m
  activity.querySelector('.copy-output').click();
  await Promise.resolve();
  assert.equal(copied.at(-1),'last success');
- savedTurns=[{role:'assistant',content:'Finished',steps:[
-   {kind:'done',summary:'Saved success',time:1700000000,result:{exit_code:0}},
-   {kind:'done',tool:'run_code',summary:'Saved command failure',result:{exit_code:2,stderr:'missing file'}},
-   {kind:'done',background:true,summary:'PRIVATE_MEMORY_LOOKUP'},
- ]}];
- await w.loadConversation();
- $('context-logs-tab').click();
- assert.equal($('context-logs-tab').getAttribute('aria-selected'),'true');
- assert.equal($('context-overview').hidden,true);
- const logs=$('context-log-list');
- assert(logs.textContent.includes('Saved success'));
- assert(logs.querySelector('time'));
- assert(!logs.textContent.includes('PRIVATE_MEMORY_LOOKUP'));
- $('logs-errors-only').click();
- assert(!logs.textContent.includes('Saved success'));
- assert(logs.textContent.includes('exit 2'));
- logs.querySelector('.copy-output').click();
- await Promise.resolve();
- assert.equal(copied.at(-1),'missing file');
- $('context-overview-tab').click();
- savedTurns=[];
+
 
 
  await w.loadConversation();
  const submit=text=>{$('prompt').value=text;$('prompt-form').dispatchEvent(new w.Event('submit',{cancelable:true}));};
  const tick=()=>new Promise(resolve=>setImmediate(resolve));
- submit('first prompt');submit('second prompt');await tick();
+ submit('first prompt');await tick();
+ task.running=true;
+ task.pending={kind:'question',summary:'Which file should I use?'};
+ await w.pollTask();
+ assert.equal($('task-summary').textContent,'Which file should I use?');
+ assert.equal($('task-review').hidden,true);
+ assert.match($('prompt').placeholder,/Reply/);
+ submit('second prompt');await tick();
+ task.pending=null;
+ task.running=false;
  assert.deepEqual(promptCalls,['first prompt']);
  assert.deepEqual(steeringCalls,['second prompt']);
  assert(!$('prompt').readOnly);

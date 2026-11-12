@@ -146,7 +146,6 @@ async function loadConversation() {
   pollTask().catch(() => {});
   renderActivity(state.turns);
   renderAgentTree();
-  renderContextLogs();
   renderContext();
 }
 
@@ -345,6 +344,11 @@ $('prompt-form').addEventListener('submit', async event => {
   const chatId = conversationState.id;
   const files = attachmentDrafts.get(chatId) || [];
   if ((!draft && !files.length) || !chatId || switchingConversation) return;
+  const answeringQuestion = taskState.pending?.kind === 'question';
+  if (answeringQuestion && files.length) {
+    message('Reply to the agent’s question with text. Remove the attachments first.', true);
+    return;
+  }
   const text = draft || 'Describe the attached files.';
 
   const submission = {text, mode:$('answer-mode').value, web:$('web-mode').value, files};
@@ -355,7 +359,7 @@ $('prompt-form').addEventListener('submit', async event => {
   attachmentDrafts.delete(chatId);
   renderAttachmentDraft();
 
-  if (queuedPrompts.has(chatId) || steeringChats.has(chatId) || (run && files.length)) {
+  if ((!answeringQuestion && queuedPrompts.has(chatId)) || steeringChats.has(chatId) || (run && files.length)) {
     queuePrompt(chatId, submission);
     return;
   }
@@ -838,12 +842,15 @@ async function pollTask(){
   if (!chatId) return;
   const state=await invoke('agent_status',{conversation_id:chatId});
   if (conversationState.id!==chatId) return;
-  taskState=state;renderAgentTree();renderContextLogs();
+  taskState=state;renderAgentTree();
   $('task-panel').hidden=!state.running&&!state.pending&&!(taskExpanded&&state.steps?.length);$('stop-task').hidden=!state.running;$('stop-task').disabled=state.stopped;$('stop-task').textContent=state.stopped?'Stopping…':'Stop';
   $('working-indicator').hidden=!state.running||!!state.pending;const current=state.steps?.at(-1);$('task-summary').textContent=state.stopped?(state.running?'Stopping…':'Stopped'):!state.running?(state.outcome===false?'Task ended · view activity':'Task complete · view activity'):state.pending?state.pending.summary:current?.kind==='planning'?(current.summary||'Choosing next action…'):current?.kind==='done'?'Checking results…':current?.summary||'Getting started…';
   renderTaskActivity(state);
 
-  $('task-review').hidden=!state.pending;if(state.pending){$('review-summary').textContent=state.pending.tool;$('review-arguments').textContent=JSON.stringify(state.pending.arguments,null,2);}
+  const question = state.pending?.kind === 'question';
+  $('prompt').placeholder = question ? 'Reply to the agent’s question…' : 'Ask, remember, or continue…';
+  $('task-review').hidden = !state.pending || question;
+  if (state.pending && !question) {$('review-summary').textContent=state.pending.tool;$('review-arguments').textContent=JSON.stringify(state.pending.arguments,null,2);}
 }
 $('approve-action').addEventListener('click',()=>reviewAction(true));$('deny-action').addEventListener('click',()=>reviewAction(false));
 async function reviewAction(allow){if(!taskState.pending)return;const id=taskState.pending.id;try{await invoke('agent_review',{id,allow,conversation_id:conversationState.id});await pollTask();}catch(e){message(e.message,true);}}
@@ -990,7 +997,7 @@ $('capture-screen-preview').addEventListener('click', async event => {
   }
 });
 
-function appendTaskSteps(list, steps, showOutputs = false, showTime = false) {
+function appendTaskSteps(list, steps, showOutputs = false) {
   const labels = {running:'Running', done:'Completed', error:'Failed', denied:'Declined',
     approved:'Approved', review:'Review requested', rejected:'Rejected'};
   for (const step of steps) {
@@ -1002,13 +1009,6 @@ function appendTaskSteps(list, steps, showOutputs = false, showTime = false) {
     const outcome = typeof result?.exit_code === 'number' ? 'exit ' + result.exit_code
       : result?.window_title || result?.navigated_url || result?.opened;
     line.textContent = [tool || step.approval ? label : null, tool, step.summary, outcome, result?.timed_out && 'Timed out', result?.truncated && 'Output truncated'].filter(Boolean).join(' · ');
-    if (showTime && Number.isFinite(step.time)) {
-      const date = new Date(step.time * 1000);
-      const timestamp = document.createElement('time');
-      timestamp.dateTime = date.toISOString();
-      timestamp.textContent = date.toLocaleString();
-      line.prepend(timestamp);
-    }
     if (step.command) {
       const command = document.createElement('pre');
       command.className = 'tool-result action-command';
@@ -1026,21 +1026,6 @@ function appendTaskSteps(list, steps, showOutputs = false, showTime = false) {
       const details = document.createElement('details');
       const title = document.createElement('summary');
       title.textContent = 'Output';
-      if (showTime && (typeof result.stdout === 'string' || typeof result.stderr === 'string')) {
-        title.textContent = 'Terminal output';
-        details.append(title);
-        for (const [label, output] of [['stdout', result.stdout], ['stderr', result.stderr]]) {
-          if (!output) continue;
-          const pre = document.createElement('pre');
-          pre.className = 'tool-result';
-          pre.textContent = output;
-          details.append(window.FabricChat.copyButton(output, 'Copy ' + label), pre);
-        }
-        if (details.childNodes.length === 1) details.append('No terminal output.');
-        line.append(details);
-        list.append(line);
-        continue;
-      }
       const pre = document.createElement('pre');
       pre.className = 'tool-result';
       pre.textContent = typeof result === 'string' ? result
@@ -1085,46 +1070,18 @@ $('undo-mcp-removal').addEventListener('click',()=>action($('undo-mcp-removal'),
 
 let selectedAgentTurn=null;
 function showContextTab(panel) {
-  for (const id of ['context-overview', 'agent-structure', 'context-logs']) {
+  for (const id of ['context-overview', 'agent-structure']) {
     $(id + '-tab').setAttribute('aria-selected', String(id === panel));
     $(id).hidden = id !== panel;
   }
   if ($('toggle-context').getAttribute('aria-pressed') === 'false') $('toggle-context').click();
   renderAgentTree();
-  renderContextLogs();
 }
 $('context-overview-tab').addEventListener('click', () => showContextTab('context-overview'));
 $('agent-structure-tab').addEventListener('click', () => {
   selectedAgentTurn = null;
   showContextTab('agent-structure');
 });
-$('context-logs-tab').addEventListener('click', () => showContextTab('context-logs'));
-$('logs-errors-only').addEventListener('change', renderContextLogs);
-
-function renderContextLogs() {
-  if ($('context-logs').hidden) return;
-  const list = $('context-log-list');
-  const errorsOnly = $('logs-errors-only').checked;
-  const saved = (conversationState.turns || []).flatMap(turn => turn.steps || []);
-  const live = chatBusy && taskState.running ? taskState.steps || [] : [];
-  const entries = visibleTaskSteps([...saved, ...live])
-    .filter(step => !errorsOnly || ['error', 'denied', 'rejected'].includes(step.kind)
-      || (typeof step.result?.exit_code === 'number' && step.result.exit_code !== 0)
-      || step.result?.timed_out)
-    .slice(-100).reverse();
-  const signature = JSON.stringify([conversationState.id, errorsOnly, entries]);
-  if (signature === lastLogSignature) return;
-  lastLogSignature = signature;
-  list.replaceChildren();
-  appendTaskSteps(list, entries, true, true);
-  if (!entries.length) {
-    const empty = document.createElement('p');
-    empty.className = 'chat-hint';
-    empty.textContent = errorsOnly ? 'No failed actions in this conversation.' : 'No task logs in this conversation yet.';
-    list.append(empty);
-  }
-}
-let lastLogSignature;
 function renderAgentTree(){
   const saved=selectedAgentTurn===null?conversationState.turns?.findLast(turn=>turn.role==='assistant'):conversationState.turns?.[selectedAgentTurn];
   const live=chatBusy && taskState.running && selectedAgentTurn===null;
