@@ -144,3 +144,6 @@ button:not(.primary):focus-visible{background:var(--soft)}
   }
   .workspace{position:relative}
 }
+
+.agent-tools{margin:.2rem 0 0;padding-left:1rem;font-size:.78rem}
+.agent-tools li{padding:.15rem 0}

@@ -1078,7 +1078,7 @@ $('capture-screen-preview').addEventListener('click', async event => {
 
 function appendTaskSteps(list, steps, showOutputs = false) {
   const labels = {running:'Running', done:'Completed', error:'Failed', denied:'Declined',
-    approved:'Approved', review:'Review requested', rejected:'Rejected'};
+    approved:'Approved', review:'Review requested', rejected:'Rejected', skipped:'Reused result'};
   for (const step of steps) {
     const line = document.createElement('div');
     line.className = 'step-line ' + step.kind;
@@ -1169,9 +1169,22 @@ function renderAgentTree(){
   const live=chatBusy && selectedAgentTurn===null;
   const records=live?taskState.steps:saved?.steps;
   const nodes=new Map();
-  for(const step of records||[]) if(step.agent?.id) nodes.set(step.agent.id,step.agent);
-  if (!live && !nodes.size && saved?.model) {
-    nodes.set('main', {id:'main', model:saved.model, provider:saved.provider, state:saved.failure?'failed':'done'});
+  const toolUsage=new Map();
+  for (const step of records || []) {
+    if (step.agent?.id) nodes.set(step.agent.id,step.agent);
+    if (!step.tool || step.background || step.tool==='memory_search' ||
+        !['running','done','error','failed','skipped'].includes(step.kind)) continue;
+    const owner=step.agent_id || 'main';
+    if (!toolUsage.has(owner)) toolUsage.set(owner,new Map());
+    const name=[step.tool,step.action].filter(Boolean).join(' · ');
+    const tools=toolUsage.get(owner);
+    const entry=tools.get(name) || {name,count:0,state:''};
+    if (step.kind==='running') entry.count++;
+    entry.state=({running:'Running',done:'Complete',error:'Failed',failed:'Failed',skipped:'Reused result'})[step.kind];
+    tools.set(name,entry);
+  }
+  if (!nodes.size && (saved?.model || toolUsage.has('main'))) {
+    nodes.set('main', {id:'main', model:saved?.model, provider:saved?.provider, state:live?'running':saved?.failure?'failed':'done'});
   } else if (!live && saved?.provider === 'cloud' && saved.model && nodes.has('main') &&
       ![...nodes.values()].some(node => node.provider === 'cloud' && node.role === 'Answer generation')) {
     nodes.set('cloud-answer', {id:'cloud-answer', parent:'main', role:'Answer generation',
@@ -1198,6 +1211,23 @@ function renderAgentTree(){
         const objective = document.createElement('small');
         objective.textContent = agent.objective;
         node.append(objective);
+      }
+      const tools=toolUsage.get(agent.id);
+      if (tools?.size) {
+        const usage=document.createElement('small');
+        usage.textContent='Tools used';
+        const entries=document.createElement('ul');
+        entries.className='agent-tools';
+        for (const tool of tools.values()) {
+          const item=document.createElement('li');
+          item.textContent=[tool.name,tool.count>1?`×${tool.count}`:null,tool.state].filter(Boolean).join(' · ');
+          entries.append(item);
+        }
+        node.append(usage,entries);
+      } else if (agent.id!=='main') {
+        const usage=document.createElement('small');
+        usage.textContent='No direct tool calls';
+        node.append(usage);
       }
       const children=branch(agent.id,depth+1);
       if(children.childNodes.length)node.append(children);

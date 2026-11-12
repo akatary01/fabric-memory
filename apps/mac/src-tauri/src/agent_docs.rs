@@ -4,6 +4,16 @@ const FILES:&[(&str,&str)]=&[
 ("README.md",include_str!("../../../../README.md")),
 ("docs/AGENT.md",include_str!("../../../../docs/AGENT.md")),
 ("docs/AGENT-LOCAL-ACTIONS.md",include_str!("../../../../docs/AGENT-LOCAL-ACTIONS.md")),
+("docs/AGENT-CODE-TOOLS.md",include_str!("../../../../docs/AGENT-CODE-TOOLS.md")),
+("docs/AGENT-CODING-WORKFLOW.md",include_str!("../../../../docs/AGENT-CODING-WORKFLOW.md")),
+("docs/AGENT-COMPUTER.md",include_str!("../../../../docs/AGENT-COMPUTER.md")),
+("docs/AGENT-DEBUGGING.md",include_str!("../../../../docs/AGENT-DEBUGGING.md")),
+("docs/AGENT-MCP-TOOLS.md",include_str!("../../../../docs/AGENT-MCP-TOOLS.md")),
+("docs/AGENT-RECORDING.md",include_str!("../../../../docs/AGENT-RECORDING.md")),
+("docs/AGENT-SETUP.md",include_str!("../../../../docs/AGENT-SETUP.md")),
+("docs/AGENT-VISUALIZATION.md",include_str!("../../../../docs/AGENT-VISUALIZATION.md")),
+("docs/AGENT-WEB.md",include_str!("../../../../docs/AGENT-WEB.md")),
+("docs/AGENT-WORKSPACE.md",include_str!("../../../../docs/AGENT-WORKSPACE.md")),
 ("docs/ARCHITECTURE.md",include_str!("../../../../docs/ARCHITECTURE.md")),
 ("docs/BEACON.md",include_str!("../../../../docs/BEACON.md")),
 ("docs/CODING-AGENT.md",include_str!("../../../../docs/CODING-AGENT.md")),
@@ -20,6 +30,7 @@ pub fn for_task(coding: bool, visual: bool, computer: bool, web: bool) -> String
     if coding {
         guides.extend([
             include_str!("../../../../docs/AGENT-CODING-WORKFLOW.md"),
+            include_str!("../../../../docs/AGENT-CODE-TOOLS.md"),
             include_str!("../../../../docs/AGENT-DEBUGGING.md"),
             include_str!("../../../../docs/AGENT-WORKSPACE.md"),
         ]);

@@ -105,12 +105,18 @@ for(const file of ['vendor/marked.js','vendor/purify.min.js','chat-render.js','m
    {agent:{id:'main',model:'local-test',provider:'local',state:'done'}},
    {agent:{id:'local-1',parent:'main',role:'Local advice',objective:'Review the plan',model:'local-test',provider:'local',state:'done'}},
    {agent:{id:'local-2',parent:'local-1',role:'Local advice',model:'local-test',provider:'local',state:'failed'}},
+   {kind:'running',tool:'workspace',action:'list'},
+   {kind:'done',tool:'workspace',action:'list'},
+   {kind:'skipped',tool:'workspace',action:'list'},
+   {kind:'done',tool:'memory_search',background:true},
  ]}];
  await w.loadConversation();
  $('agent-structure-tab').click();
  const tree=$('agent-tree');
- assert.match(tree.querySelector('ul > li > ul > li > ul > li').textContent,/Failed/);
+ assert.match(tree.querySelector('.agent-branch > li > .agent-branch > li > .agent-branch > li').textContent,/Failed/);
  assert.match(tree.textContent,/Review the plan/);
+ assert.match(tree.querySelector('.agent-tools').textContent,/workspace · list · Reused result/);
+ assert.doesNotMatch(tree.textContent,/memory_search/);
  assert.match(tree.textContent,/Answer generation.*cloud-test/);
  $('context-overview-tab').click();
  savedTurns=[];

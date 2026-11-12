@@ -413,6 +413,11 @@ impl Runner {
                 return Ok(json!(observations).to_string());
             }
             let args = plan["arguments"].clone();
+            if let Some(replay) = stall.replay_read(name, &args, revision)? {
+                self.step("skipped", "Reused the existing workspace result", json!({"tool":name,"action":args["action"]}));
+                observations.push(json!({"tool":name,"result":replay}));
+                continue;
+            }
             let summary=action_label(name,&args);
             if name=="memory_search" || name=="web_search" {
                 let key=format!("{name}:{}",args);
@@ -439,6 +444,7 @@ impl Runner {
             }
             self.check()?;
             if !self.begin_operation(revision) { continue; }
+            stall.invalidate_reads(name, &args);
             self.step("running", &summary, json!({"tool":name,"action":args["action"].as_str().or_else(||args["operation"].as_str()),"command":executed_command(name,&args)}));
             match { let _screen = self.screen_operation(name, &args); execute(name, &args) } {
                 Ok(value) => {
@@ -449,6 +455,7 @@ impl Runner {
                     let raw = value.to_string();
                     let receipt = tool_receipt(name, &value, &raw);
                     self.step("done", summary, json!({"tool":name,"action":args["action"].as_str().or_else(||args["operation"].as_str()),"result":receipt}));
+                    stall.remember_read(name, &args, revision, &value);
                     stall.observe(name,&args,Ok(&value))?;
                     if name=="computer" && value.get("ui").is_some(){forget_old_ui(&mut observations);}
                     observations.push(if name == "memory_search" {
@@ -655,6 +662,13 @@ impl Runner {
                 if !args.is_object() {
                     return Err("Tool arguments must be an object".into());
                 }
+                if let Some(replay) = stall.replay_read(name, &args, revision)? {
+                    self.step("skipped", "Reused the existing workspace result", json!({"tool":name,"action":args["action"]}));
+                    observations.push(json!({"tool":name,"result":replay}));
+                    messages.push(json!({"role":"tool","tool_name":alias,"tool_call_id":call["id"],"content":replay}));
+                    if cloud_model.is_none() { structured_local = true; }
+                    continue;
+                }
                 if (name=="memory_search" && memory_queries>=1) || (name=="web_search" && web_queries >= WEB_SEARCH_LIMIT) {
 
                 messages.push(json!({"role":"tool","tool_name":alias,"tool_call_id":call["id"],"content":"This optional search budget is complete. Use existing observations or choose another action."}));continue;
@@ -766,6 +780,7 @@ impl Runner {
                 }
                 self.check()?;
                 if !self.begin_operation(revision) { continue 'planning; }
+                stall.invalidate_reads(name, &args);
                 self.step("running", &summary, json!({"tool":name,"action":args["action"].as_str().or_else(||args["operation"].as_str()),"command":executed_command(name,&args)}));
                 executed += 1;
                 if name=="memory_search" {memory_queries+=1;}
@@ -818,6 +833,9 @@ impl Runner {
                     latest_ui = None;
                 }
                 if name=="blender"&&args["operation"]=="inspect"&&result["verified"]==true{blender_inspected=true;}
+                if result["error"].is_null() {
+                    stall.remember_read(name, &args, revision, &result);
+                }
                 if name != "delegate_cloud" {
                     stall.observe(name,&args,if let Some(error)=result["error"].as_str(){Err(error)}else{Ok(&result)})?;
                 }
@@ -1042,7 +1060,49 @@ fn computer_result(value: &Value) -> String {
 fn forget_old_ui(items:&mut [Value]){for item in items{let key=if item["tool"]=="computer"{"result"}else if item["role"]=="tool" && item["tool_name"]=="computer"{"content"}else{continue};if let Some(raw)=item[key].as_str(){if let Ok(mut value)=serde_json::from_str::<Value>(raw){if value.get("ui").is_some(){value["ui"]=json!("Superseded by a newer observation. Do not reuse these element paths.");item[key]=json!(value.to_string());}}}}}
 #[cfg(test)]mod observation_tests{use super::*;#[test]fn fresh_ui_replaces_stale_paths_without_losing_action_outcomes(){let mut items=vec![json!({"tool":"computer","result":json!({"app":"browser","ui":"old element 0.1","window_title":"Before"}).to_string()}),json!({"tool":"computer","result":json!({"opened":"browser"}).to_string()})];forget_old_ui(&mut items);assert!(!items[0]["result"].as_str().unwrap().contains("old element"));assert!(items[1]["result"].as_str().unwrap().contains("opened"));let raw=computer_result(&json!({"ui":"x".repeat(20000),"window_title":"hello world"}));let parsed:Value=serde_json::from_str(&raw).unwrap();assert_eq!(parsed["ui"].as_str().unwrap().len(),10000);assert_eq!(parsed["window_title"],"hello world");}}
 
-#[derive(Default)]struct StallGuard{seen:std::collections::HashMap<u64,usize>}
+#[derive(Default)]
+struct StallGuard {
+    seen: std::collections::HashMap<u64, usize>,
+    workspace_reads: std::collections::HashMap<(usize, String, std::path::PathBuf), (String, bool)>,
+}
+
+impl StallGuard {
+    fn read_key(tool: &str, args: &Value, revision: usize) -> Option<(usize, String, std::path::PathBuf)> {
+        let action = args["action"].as_str()?;
+        if tool != "workspace" || !matches!(action, "list" | "read" | "instructions") { return None; }
+        let path = std::path::Path::new(args["path"].as_str()?);
+        let normalized = path.components().filter(|part| *part != std::path::Component::CurDir)
+            .collect::<std::path::PathBuf>();
+        Some((revision, action.to_owned(), normalized))
+    }
+
+    fn replay_read(&mut self, tool: &str, args: &Value, revision: usize) -> Result<Option<String>, String> {
+        let Some(key) = Self::read_key(tool, args, revision) else { return Ok(None); };
+        let Some((result, reminded)) = self.workspace_reads.get_mut(&key) else { return Ok(None); };
+        if *reminded {
+            return Err(format!("No progress: workspace.{} kept requesting {} after receiving its result. Completed actions are retained.",
+                key.1, args["path"].as_str().unwrap_or(".")));
+        }
+        *reminded = true;
+        Ok(Some(format!("This inspection already succeeded. Use its result below. For a coding task, read a specific file, make the requested edit, or run a relevant check. Repeat this inspection only after the workspace changes.\n{result}")))
+    }
+
+    fn remember_read(&mut self, tool: &str, args: &Value, revision: usize, result: &Value) {
+        if let Some(key) = Self::read_key(tool, args, revision) {
+            self.workspace_reads.insert(key, (result.to_string().chars().take(12_000).collect(), false));
+        }
+    }
+
+    fn invalidate_reads(&mut self, tool: &str, args: &Value) {
+        let action = args["action"].as_str();
+        if tool == "run_code" || tool.starts_with("mcp::") || tool == "blender"
+            || (tool == "workspace" && action == Some("write"))
+            || (tool == "saved_tool" && action == Some("run"))
+            || (tool == "computer" && !matches!(action, Some("observe" | "resolve_app"))) {
+            self.workspace_reads.clear();
+        }
+    }
+}
 impl StallGuard{fn observe(&mut self,tool:&str,args:&Value,result:Result<&Value,&str>)->Result<(),String>{
  use std::hash::{Hash,Hasher};let mut hash=std::collections::hash_map::DefaultHasher::new();tool.hash(&mut hash);
  if tool != "blender" || result.is_ok() { args.to_string().hash(&mut hash); }
@@ -1051,6 +1111,22 @@ impl StallGuard{fn observe(&mut self,tool:&str,args:&Value,result:Result<&Value,
  if *count>=limit{return Err(format!("No progress: {tool} repeated the same {} {count} times. {} Completed actions are retained. Use a corrected action or another local model instead of repeating it.",if result.is_err(){"failed action"}else{"unchanged observation"},result.err().unwrap_or("The result did not change.")));}Ok(())
 }}
 #[cfg(test)]mod stall_tests{use super::*;#[test]fn repeated_invalid_paths_stop_early_and_corrected_actions_can_progress(){let mut guard=StallGuard::default();let args=json!({"action":"list","path":"/wrong/root"});assert!(guard.observe("workspace",&args,Err("Use a relative workspace path")).is_ok());let e=guard.observe("workspace",&args,Err("Use a relative workspace path")).unwrap_err();assert!(e.contains("No progress"));assert!(e.contains("relative workspace path"));assert!(guard.observe("workspace",&json!({"action":"list","path":"."}),Ok(&json!({"files":["main.py"]}))).is_ok());}#[test]fn reading_after_an_edit_is_allowed_but_endless_listing_is_not(){let mut g=StallGuard::default();let args=json!({"action":"list","path":"."});let result=json!({"files":[]});g.observe("workspace",&args,Ok(&result)).unwrap();g.observe("workspace",&args,Ok(&result)).unwrap();assert!(g.observe("workspace",&args,Ok(&result)).is_err());g.observe("workspace",&json!({"action":"write","path":"x"}),Ok(&json!({"written":true}))).unwrap();assert!(g.observe("workspace",&args,Ok(&result)).is_ok());}}
+
+
+#[cfg(test)]
+#[test]
+fn workspace_inspection_reuses_its_result_then_stops_until_the_workspace_changes() {
+    let mut guard = StallGuard::default();
+    let root = json!({"action":"list","path":"."});
+    let same_root = json!({"action":"list","path":"./","unused":true});
+    assert!(guard.replay_read("workspace", &root, 0).unwrap().is_none());
+    guard.remember_read("workspace", &root, 0, &json!({"entries":[{"name":"main.py"}]}));
+    assert!(guard.replay_read("workspace", &same_root, 0).unwrap().unwrap().contains("main.py"));
+    assert!(guard.replay_read("workspace", &root, 0).unwrap_err().contains("No progress"));
+    assert!(guard.replay_read("workspace", &root, 1).unwrap().is_none());
+    guard.invalidate_reads("workspace", &json!({"action":"write","path":"new.py"}));
+    assert!(guard.replay_read("workspace", &root, 0).unwrap().is_none());
+}
 
 fn auto_approval_allowed(tool:&str,enabled:bool)->bool{enabled&&!matches!(tool,"cloud_workspace"|"workspace_access")}
 #[cfg(test)]mod sharing_approval_tests{use super::*;#[test]fn automatic_commands_do_not_grant_private_workspace_sharing(){assert!(auto_approval_allowed("run_code",true));assert!(auto_approval_allowed("computer",true));assert!(!auto_approval_allowed("cloud_workspace",true));assert!(!auto_approval_allowed("run_code",false));}}

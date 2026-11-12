@@ -17,3 +17,9 @@ For a partial result, say which app or screen was reached and where progress sto
 For a file already visible in Finder, start with `computer(action="observe", app="Finder")`. Confirm the expected window and element label. Use the returned element path and label in `computer(action="click", app="Finder", element=..., expected=...)`, then observe again. When opening a URL, provide the requested URL and browser explicitly. Verify the destination before reporting that it opened.
 
 If accessibility reports no suitable control, a recent screenshot may help orient the user. Use screen coordinates only when the active model can ground the target in that exact capture. If the app, target, or selection remains uncertain, ask the user instead of clicking a guess. Before acting on anything that sends, publishes, deletes, or changes an account, check that the user authorized that exact outcome.
+
+## Worked tool calls
+
+- Open Chrome with `computer {"action":"open_app","app":"chrome"}`, then use `computer {"action":"observe","app":"chrome"}` if the task depends on a visible window. A launch receipt does not establish the page or input state.
+- To click a visible control, take its path and label from the most recent observation of that app. For example, if the observed line is `0.2 AXButton · Continue`, call `computer {"action":"click","app":"com.example.app","element":"0.2","expected":"AXButton · Continue"}`. Replace the example target with the observed target. If the label changes, observe again and choose the new path.
+- To capture a screenshot, call `computer {"action":"screenshot"}` and check the result for the saved image path. Opening Screenshot alone does not complete capture.

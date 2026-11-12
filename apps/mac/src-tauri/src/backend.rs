@@ -434,7 +434,10 @@ Documents (JSON): {}",
             || ["chart", "plot", "diagram", "visualize"].iter().any(|word| effective.to_lowercase().contains(word));
         let bundled_guide = crate::agent_docs::for_task(coding || crate::routing::coding_request(effective),
             visual, computer_task, browse);
-        let guide_context = [bundled_guide.as_str(), project_guide.as_str()].into_iter()
+        let mcp_guide = if tools.iter().any(|tool| tool["name"].as_str().is_some_and(|name| name.starts_with("mcp::"))) {
+            include_str!("../../../../docs/AGENT-MCP-TOOLS.md")
+        } else { "" };
+        let guide_context = [bundled_guide.as_str(), project_guide.as_str(), mcp_guide].into_iter()
             .filter(|guide| !guide.is_empty()).collect::<Vec<_>>().join("\n");
         let mut web_error = None;
         let sources = if browse {
