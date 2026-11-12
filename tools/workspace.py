@@ -1,6 +1,7 @@
 """Fabric-owned workspace tools and bounded, sandboxed command execution."""
 import json,os,signal,subprocess,sys,threading,time,tempfile,stat,textwrap,math,re
 from pathlib import Path
+from shlex import quote
 LIMIT=32768
 child=None
 
@@ -96,14 +97,14 @@ def saved_tool(root, path, args, python, git):
     )
 
 def run_command(root,path,args,python=None,git=None,argv=None,read_paths=(),keep_pythonhome=False):
-    global child
     command=args.get('command','')
     if argv is None and (not isinstance(command,str) or not command.strip() or len(command)>16000):raise ValueError('Enter a command under 16 KB')
     if not path.is_dir():raise ValueError('Command directory does not exist')
     timeout=max(1,min(600,int(args.get('timeout_seconds',60))))
     scratch=resolve(root,'.fabric');scratch.mkdir(exist_ok=True);scratch.chmod(0o700);(scratch/'.gitignore').write_text('*\n')
     for folder in ('home','tmp','cache'):(scratch/folder).mkdir(exist_ok=True)
-    base=Path(python or sys.executable).parent
+    interpreter = Path(python or sys.executable).absolute()
+    base = interpreter.parent
     search=[str(base),str(Path(git).parent) if git else '', '/opt/homebrew/bin','/usr/local/bin','/usr/bin','/bin','/usr/sbin','/sbin']
     env={'PATH':os.pathsep.join(p for p in search if p),'HOME':str(scratch/'home'),'TMPDIR':str(scratch/'tmp'),'XDG_CACHE_HOME':str(scratch/'cache'),'LANG':'en_US.UTF-8','PYTHONDONTWRITEBYTECODE':'1','PIP_DISABLE_PIP_VERSION_CHECK':'1','GIT_TERMINAL_PROMPT':'0','NO_COLOR':'1'}
     if os.environ.get('PYTHONHOME'):env['PYTHONHOME']=os.environ['PYTHONHOME']
@@ -111,7 +112,23 @@ def run_command(root,path,args,python=None,git=None,argv=None,read_paths=(),keep
     if git and Path(git).with_name('git-http-backend').is_file():env['GIT_EXEC_PATH']=str(Path(git).parent)
     if sys.platform!='darwin' or not Path('/usr/bin/sandbox-exec').exists():raise ValueError('Sandboxed execution requires macOS')
     if argv is not None and not keep_pythonhome:env.pop('PYTHONHOME',None)
-    child=subprocess.Popen(['/usr/bin/sandbox-exec','-p',sandbox(root,scratch,args.get('network') is True,read_paths),*(argv if argv is not None else ['/bin/zsh','-f','-c',command])],cwd=path,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    profile = sandbox(root, scratch, args.get('network') is True, read_paths)
+    launch = ['/usr/bin/sandbox-exec', '-p', profile,
+              *(argv if argv is not None else ['/bin/zsh', '-f', '-c', command])]
+    with tempfile.TemporaryDirectory(prefix='python-bin-', dir=scratch) as aliases:
+        # Invoke the original path so Python finds its virtual environment.
+        for name in ('python', 'python3'):
+            alias = Path(aliases) / name
+            alias.write_text(f'#!/bin/sh\nexec {quote(str(interpreter))} "$@"\n')
+            alias.chmod(0o700)
+        env['PATH'] = aliases + os.pathsep + env['PATH']
+        return capture_command(launch, path, env, timeout)
+
+
+def capture_command(launch, path, env, timeout):
+    global child
+    child = subprocess.Popen(launch, cwd=path, env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     buffers={};truncated={}
     def read(name,stream):
         data=bytearray();total=0
@@ -276,8 +293,10 @@ if __name__=='__main__':
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     request=json.loads(sys.stdin.readline())
     def watch():
-        sys.stdin.buffer.read()
-        stop()
+        # A daemon must not hold Python's buffered stdin lock during shutdown.
+        while os.read(sys.stdin.fileno(), 4096):
+            pass
+        os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=watch,daemon=True).start()
     try:result={'result':execute(request['root'],request['args'],request.get('python'),request.get('git'))}
     except Exception as error:result={'error':str(error)}

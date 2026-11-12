@@ -16,7 +16,10 @@ class WorkspaceTests(unittest.TestCase):
    module.execute(root,{'action':'write','path':'main.py','content':'assert 2+2==5\n'})
    first=module.execute(root,{'action':'run','command':'python3 main.py'});self.assertNotEqual(first['exit_code'],0);self.assertIn('AssertionError',first['stderr'])
    module.execute(root,{'action':'write','path':'main.py','content':'assert 2+2==4\nprint("passed")\n'})
-   second=module.execute(root,{'action':'run','command':'python3 main.py'});self.assertEqual(second['exit_code'],0,second);self.assertIn('passed',second['stdout'])
+   for interpreter in ('python', 'python3'):
+    result = module.execute(root, {'action':'run', 'command':f'{interpreter} main.py'})
+    self.assertEqual(result['exit_code'], 0, result)
+    self.assertIn('passed', result['stdout'])
    bounded=module.execute(root,{'action':'run','command':"python3 -c 'print(\"x\"*100000)'"});self.assertTrue(bounded['truncated']);self.assertLessEqual(len(bounded['stdout']),32768)
  @unittest.skipUnless(sys.platform=='darwin','macOS sandbox')
  def test_sandbox_and_timeout(self):
@@ -37,7 +40,7 @@ class WorkspaceTests(unittest.TestCase):
    worker.stdin.write(json.dumps({'root':str(root),'args':{'action':'run','command':'echo $$ > child.pid; sleep 20'}})+'\n');worker.stdin.flush()
    deadline=time.monotonic()+5
    while not (root/'child.pid').exists() and time.monotonic()<deadline:time.sleep(.05)
-   self.assertTrue((root/'child.pid').exists());pid=int((root/'child.pid').read_text());worker.terminate();worker.wait(timeout=5)
+   self.assertTrue((root/'child.pid').exists());pid=int((root/'child.pid').read_text());worker.terminate();self.assertEqual(worker.wait(timeout=5), 0, worker.stderr.read())
    worker.stdin.close();worker.stdout.close();worker.stderr.close()
    with self.assertRaises(ProcessLookupError):os.kill(pid,0)
 
