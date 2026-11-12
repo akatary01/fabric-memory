@@ -26,15 +26,19 @@ def stop_instances(executable):
         time.sleep(.1)
     if pids:raise ValueError('Close fabric-memory, then run fabric-memory run again to finish updating it.')
 
-def install_mac_app(root,binary,env):
-    app=support()/'App/fabric-memory.app';app.parent.mkdir(parents=True,exist_ok=True)
+APPLICATIONS_APP = Path('/Applications/fabric-memory.app')
+
+def install_mac_app(root, binary, env, destination=None):
+    app = destination or support()/'App/fabric-memory.app'
+    app.parent.mkdir(parents=True, exist_ok=True)
+    source = fingerprint(root)
     with tempfile.TemporaryDirectory(prefix='.fabric-stage-',dir=app.parent) as stage_dir:
         stage=Path(stage_dir)/'fabric-memory.app';contents=stage/'Contents';(contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()
         shutil.copy2(binary,contents/'MacOS/fabric-mac')
         subprocess.run(['xcrun','swiftc','-O',str(root/'apps/mac/automation/ComputerUse.swift'),'-o',str(contents/'MacOS/fabric-computer-use')],check=True)
         shutil.copyfile(root/'apps/mac/icons/FabricMemory.icns',contents/'Resources/FabricMemory.icns')
         runtime_env={key:env[key] for key in ['FABRIC_ASSET_DIR','ORT_DYLIB_PATH','FABRIC_DATA_DIR','FABRIC_ENV_FILE','FABRIC_PYTHON'] if key in env}
-        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSMicrophoneUsageDescription':'Record microphone audio when you request a screen recording.','NSAudioCaptureUsageDescription':'Record system audio when you request a screen recording.','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env}
+        info={'CFBundleExecutable':'fabric-mac','CFBundleIdentifier':'local.memoryfabric.mac','CFBundleName':'fabric-memory','CFBundleDisplayName':'fabric-memory','CFBundleIconFile':'FabricMemory.icns','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.2.0','CFBundleVersion':'2','NSHighResolutionCapable':True,'NSPrincipalClass':'NSApplication','NSMicrophoneUsageDescription':'Record microphone audio when you request a screen recording.','NSAudioCaptureUsageDescription':'Record system audio when you request a screen recording.','NSAppleEventsUsageDescription':'Use the Mac apps you choose for agent tasks.','LSMinimumSystemVersion':'14.0','LSEnvironment':runtime_env,'FabricSourceFingerprint':source}
         (contents/'Info.plist').write_bytes(plistlib.dumps(info))
         subprocess.run(['xattr','-cr',str(stage)],check=True)
         subprocess.run(['codesign','--force','--sign','-',str(contents/'MacOS/fabric-computer-use')],check=True)
@@ -47,29 +51,45 @@ def install_mac_app(root,binary,env):
         except Exception:
             if previous.exists():previous.rename(app)
             raise
-    (app.parent/'mac-source.sha256').write_text(fingerprint(root))
+    if destination is None:
+        (app.parent/'mac-source.sha256').write_text(source)
     return app
 
+def installed_development_fingerprint():
+    try:
+        info = plistlib.loads((APPLICATIONS_APP/'Contents/Info.plist').read_bytes())
+        if info.get('CFBundleIdentifier') == 'local.memoryfabric.mac':
+            return info.get('FabricSourceFingerprint')
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        pass
+    return None
+
 def installed_mac_app(root):
-    app=Path('/Applications/fabric-memory.app')
+    app = APPLICATIONS_APP
+    source = fingerprint(root)
+    if installed_development_fingerprint() == source:
+        return app
     try:
         manifest=json.loads((app/'Contents/Resources/standalone.json').read_text())
-        if manifest.get('source_fingerprint')==fingerprint(root):return app
-    except (OSError,ValueError):pass
+        if manifest.get('source_fingerprint') == source:
+            return app
+    except (OSError, ValueError):
+        pass
     return None
 
 def mac_app(root,env,rebuild=False):
     if sys.platform!='darwin':raise ValueError('The Mac app requires macOS. The standalone Memory beacon also runs on Linux.')
     installed=installed_mac_app(root)
     if not rebuild and installed:return installed
-    app=support()/'App/fabric-memory.app';stamp=app.parent/'mac-source.sha256'
-    if not rebuild and app.exists() and stamp.exists() and stamp.read_text()==fingerprint(root):return app
+    destination = APPLICATIONS_APP if installed_development_fingerprint() else None
+    app=destination or support()/'App/fabric-memory.app';stamp=app.parent/'mac-source.sha256'
+    if destination is None and not rebuild and app.exists() and stamp.exists() and stamp.read_text()==fingerprint(root):return app
     if not shutil.which('cargo'):raise ValueError('Install Rust (rustup.rs) to build the Mac app')
     # Compile in temporary storage and retain only the signed app bundle.
     with tempfile.TemporaryDirectory(prefix='fabric-native-build-') as build_dir:
         build_env=dict(env,CARGO_TARGET_DIR=build_dir,CARGO_BUILD_JOBS='2')
         subprocess.run(['cargo','build','--locked','-p','fabric-mac','-j','2'],cwd=root,env=build_env,check=True)
-        return install_mac_app(root,Path(build_dir)/'debug/fabric-mac',env)
+        return install_mac_app(root,Path(build_dir)/'debug/fabric-mac',env,destination)
 
 def environment(root):
     env=dict(os.environ);env.setdefault('FABRIC_PYTHON',sys.executable);env.setdefault('FABRIC_ASSET_DIR',str(root/'assets'));env.setdefault('FABRIC_DATA_DIR',str(support()))
@@ -82,6 +102,9 @@ def environment(root):
     return env
 
 def open_mac_app(app,env):
+    if app == APPLICATIONS_APP:
+        subprocess.run(['open', '-a', str(app)], check=True)
+        return
     binary=app/'Contents/MacOS/fabric-mac'
     processes=subprocess.run(['ps','-ax','-o','comm='],check=True,capture_output=True,text=True)
     if str(binary) in [line.strip() for line in processes.stdout.splitlines()]:
@@ -141,7 +164,7 @@ def main(root):
         installed=installed_mac_app(root)
         candidate=installed or support()/'App/fabric-memory.app'
         stamp=candidate.parent/'mac-source.sha256'
-        bundled=(bool(installed) or ((candidate/'Contents/Resources/standalone.json').is_file() and stamp.is_file() and stamp.read_text()==fingerprint(root))) and not args.rebuild
+        bundled=(candidate/'Contents/Resources/standalone.json').is_file() and (bool(installed) or (stamp.is_file() and stamp.read_text()==fingerprint(root))) and not args.rebuild
         if sys.platform=='darwin' and not bundled:
             subprocess.run([sys.executable, str(root/'tools/local_llm.py')], cwd=root, check=True)
             if not os.getenv('FABRIC_SEARCH_URL'):

@@ -83,10 +83,10 @@ fn main() {
                 use tauri::menu::{Menu, MenuItem};
                 let status = MenuItem::with_id(app, "screen_control_status", "Screen idle", false, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&status])?;
+                let icon = app.default_window_icon().cloned().ok_or("Missing fabric-memory icon")?;
                 let tray = tauri::tray::TrayIconBuilder::with_id("memory-fabric")
                     .menu(&menu)
-                    .icon(screen_status_icon(false))
-                    .icon_as_template(true)
+                    .icon(icon)
                     .tooltip("fabric-memory: screen idle")
                     .build(app)?;
                 let handle = app.handle().clone();
@@ -98,7 +98,6 @@ fn main() {
                         if current != active {
                             active = current;
                             let tooltip = if active { "fabric-memory: controlling the screen" } else { "fabric-memory: screen idle" };
-                            let _ = tray.set_icon_with_as_template(Some(screen_status_icon(active)), true);
                             let _ = tray.set_tooltip(Some(tooltip));
                             let _ = status.set_text(if active { "Controlling the screen" } else { "Screen idle" });
                         }
@@ -118,23 +117,4 @@ fn main() {
         .invoke_handler(tauri::generate_handler![service::app_command])
         .run(tauri::generate_context!())
         .expect("could not run fabric-memory");
-}
-
-
-#[cfg(target_os = "macos")]
-fn screen_status_icon(active: bool) -> tauri::image::Image<'static> {
-    const SIZE: usize = 18;
-    let mut pixels = vec![0; SIZE * SIZE * 4];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let frame = (2..=15).contains(&x) && (3..=12).contains(&y)
-                && (x == 2 || x == 15 || y == 3 || y == 12);
-            let stand = (7..=10).contains(&x) && y == 14;
-            let indicator = active && (6..=11).contains(&x) && (6..=9).contains(&y);
-            if frame || stand || indicator {
-                pixels[(y * SIZE + x) * 4 + 3] = 255;
-            }
-        }
-    }
-    tauri::image::Image::new_owned(pixels, SIZE as u32, SIZE as u32)
 }
