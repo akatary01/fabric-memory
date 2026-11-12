@@ -26,6 +26,32 @@ def ready():
     try:return bool(api("/api/version").get("version"))
     except Exception:return False
 
+def archive_digest(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_archive(url, archive):
+    # The system curl uses macOS trust independently of Python's CA bundle.
+    partial = archive.with_suffix(".partial")
+    try:
+        subprocess.run([
+            "/usr/bin/curl", "--fail", "--silent", "--show-error", "--location",
+            "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "30",
+            "--speed-limit", "1", "--speed-time", "60", "--output", str(partial), url,
+        ], check=True)
+        if archive_digest(partial) != SHA256:
+            raise SystemExit("Ollama archive checksum mismatch.")
+        partial.replace(archive)
+    except subprocess.CalledProcessError:
+        raise SystemExit("Could not download Ollama. Check the network and macOS certificate trust.") from None
+    finally:
+        partial.unlink(missing_ok=True)
+
+
 def main():
     os.umask(0o077);ROOT.mkdir(parents=True,exist_ok=True)
     lock=(ROOT/"setup.lock").open("a");fcntl.flock(lock,fcntl.LOCK_EX)
@@ -39,17 +65,10 @@ def main():
         runtime=ROOT/("ollama-"+VERSION)
         if not (runtime/"installed.json").exists():
             archive=ROOT/("ollama-v"+VERSION+".tgz")
-            if not archive.exists() or hashlib.sha256(archive.read_bytes()).hexdigest()!=SHA256:
+            if not archive.exists() or archive_digest(archive)!=SHA256:
                 print("Downloading Ollama "+VERSION+"…",flush=True)
                 url="https://github.com/ollama/ollama/releases/download/v"+VERSION+"/ollama-darwin.tgz"
-                # Use normal HTTPS trust and the pinned official release digest.
-                from urllib.request import urlopen
-                with urlopen(url,timeout=60) as source,archive.open("wb") as target:
-                    while True:
-                        chunk=source.read(1024*1024)
-                        if not chunk:break
-                        target.write(chunk)
-            if hashlib.sha256(archive.read_bytes()).hexdigest()!=SHA256:raise RuntimeError("Ollama archive checksum mismatch")
+                download_archive(url, archive)
             runtime.mkdir(exist_ok=True)
             with tarfile.open(archive) as bundle:
                 for member in bundle.getmembers():
