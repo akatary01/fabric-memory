@@ -3,6 +3,7 @@ const FILES:&[(&str,&str)]=&[
 ("AGENTS.md",include_str!("../../../../AGENTS.md")),
 ("README.md",include_str!("../../../../README.md")),
 ("docs/AGENT.md",include_str!("../../../../docs/AGENT.md")),
+("docs/AGENT-LOCAL-ACTIONS.md",include_str!("../../../../docs/AGENT-LOCAL-ACTIONS.md")),
 ("docs/ARCHITECTURE.md",include_str!("../../../../docs/ARCHITECTURE.md")),
 ("docs/BEACON.md",include_str!("../../../../docs/BEACON.md")),
 ("docs/CODING-AGENT.md",include_str!("../../../../docs/CODING-AGENT.md")),

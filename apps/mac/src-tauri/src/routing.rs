@@ -46,7 +46,7 @@ pub fn decide(mode: Mode, web: WebMode, plan: &Plan, cloud: bool) -> Result<Deci
     let reason = match mode {
         Mode::Local => "Local mode selected; no cloud fallback.".into(),
         Mode::Cloud => "Cloud mode selected.".into(),
-        Mode::Auto if plan.route == Mode::Cloud && !cloud => format!(
+        Mode::Auto if auto_prefers_cloud(plan) && !cloud => format!(
             "{} Cloud is not configured; using local instead.",
             plan.reason
         ),
@@ -62,7 +62,7 @@ pub fn decide(mode: Mode, web: WebMode, plan: &Plan, cloud: bool) -> Result<Deci
 
 pub fn auto_prefers_cloud(plan: &Plan) -> bool {
     matches!(plan.complexity.as_str(), "complex" | "expert")
-        || (plan.route == Mode::Cloud && plan.complexity == "standard" && !plan.needs_web)
+        || (plan.complexity == "standard" && !plan.needs_web)
 }
 
 pub fn depends_on_context(question: &str) -> bool {
@@ -523,6 +523,18 @@ mod intake_tests {
         assert!(action_task("Explain how to implement exponential backoff.", &[]).is_none());
         assert_eq!(action_task("Implement retries in my repo and run the tests.", &[]).unwrap().kind, "workspace");
         assert_eq!(action_task("Show me how it works on my Mac and open Finder.", &[]).unwrap().kind, "computer");
+    }
+
+    #[test]
+    fn auto_prefers_cloud_for_standard_reasoning_even_if_local_router_picks_local() {
+        let mut plan = fallback("Compare two approaches to handling retries.");
+        plan.route = Mode::Local;
+        assert_eq!(plan.complexity, "standard");
+        assert_eq!(decide(Mode::Auto, WebMode::Off, &plan, true).unwrap().provider, Mode::Cloud);
+        assert_eq!(decide(Mode::Local, WebMode::Off, &plan, true).unwrap().provider, Mode::Local);
+        assert_eq!(decide(Mode::Auto, WebMode::Off, &plan, false).unwrap().provider, Mode::Local);
+        let simple = fallback("hi");
+        assert_eq!(decide(Mode::Auto, WebMode::Off, &simple, true).unwrap().provider, Mode::Local);
     }
 
     #[test]
