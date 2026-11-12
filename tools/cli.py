@@ -7,7 +7,7 @@ def support():
 
 def fingerprint(root):
     h=hashlib.sha256(str(root).encode())
-    paths=[root/'AGENTS.md',root/'README.md',*root.glob('docs/*.md'),root/'Cargo.lock',root/'Cargo.toml',root/'core/Cargo.toml',*root.glob('core/**/*.rs'),*root.glob('apps/mac/src-tauri/src/*.rs'),root/'apps/mac/src-tauri/Cargo.toml',root/'apps/mac/src-tauri/build.rs',root/'apps/mac/src-tauri/Tauri.toml',*root.glob('apps/mac/ui/**/*'),*root.glob('apps/mac/automation/*.swift'),root/'tools/mcp_bridge.py',root/'tools/packaged_services.py',root/'tools/local_beacon.py',root/'tools/workspace.py',root/'tools/sync/host.py',root/'tools/sync/enrollment.py',root/'tools/bundle_git.py',root/'apps/mac/icons/FabricMemory.icns']
+    paths=[root/'AGENTS.md',root/'README.md',*root.glob('docs/*.md'),root/'Cargo.lock',root/'Cargo.toml',root/'core/Cargo.toml',*root.glob('core/**/*.rs'),*root.glob('apps/mac/src-tauri/src/*.rs'),root/'apps/mac/src-tauri/Cargo.toml',root/'apps/mac/src-tauri/build.rs',root/'apps/mac/src-tauri/Tauri.toml',*root.glob('apps/mac/ui/**/*'),*root.glob('apps/mac/automation/*.swift'),root/'tools/mcp_bridge.py',root/'tools/packaged_services.py',root/'tools/local_beacon.py',root/'tools/workspace.py',root/'tools/sync/host.py',root/'tools/sync/enrollment.py',root/'tools/bundle_git.py',root/'apps/mac/icons/FabricMemory.icns',*root.glob('apps/mac/src-tauri/icons/*')]
     for p in sorted(p for p in paths if p.is_file()):h.update(str(p.relative_to(root)).encode());h.update(p.read_bytes())
     return h.hexdigest()
 
@@ -26,14 +26,27 @@ def stop_instances(executable):
         time.sleep(.1)
     if pids:raise ValueError('Close fabric-memory, then run fabric-memory run again to finish updating it.')
 
-APPLICATIONS_APP = Path('/Applications/fabric-memory.app')
+APP_BUNDLE_NAME = 'Fabric Memory.app'
+APPLICATIONS_APP = Path('/Applications')/APP_BUNDLE_NAME
+
+def legacy_mac_app(app):
+    legacy = app.with_name('fabric-memory.app')
+    if app.name != APP_BUNDLE_NAME or legacy.is_symlink():
+        return None
+    try:
+        info = plistlib.loads((legacy/'Contents/Info.plist').read_bytes())
+        if info.get('CFBundleIdentifier') == 'local.memoryfabric.mac':
+            return legacy
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        pass
+    return None
 
 def install_mac_app(root, binary, env, destination=None):
-    app = destination or support()/'App/fabric-memory.app'
+    app = destination or support()/'App'/APP_BUNDLE_NAME
     app.parent.mkdir(parents=True, exist_ok=True)
     source = fingerprint(root)
     with tempfile.TemporaryDirectory(prefix='.fabric-stage-',dir=app.parent) as stage_dir:
-        stage=Path(stage_dir)/'fabric-memory.app';contents=stage/'Contents';(contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()
+        stage=Path(stage_dir)/APP_BUNDLE_NAME;contents=stage/'Contents';(contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()
         shutil.copy2(binary,contents/'MacOS/fabric-mac')
         subprocess.run(['xcrun','swiftc','-O',str(root/'apps/mac/automation/ComputerUse.swift'),'-o',str(contents/'MacOS/fabric-computer-use')],check=True)
         shutil.copyfile(root/'apps/mac/icons/FabricMemory.icns',contents/'Resources/FabricMemory.icns')
@@ -44,20 +57,31 @@ def install_mac_app(root, binary, env, destination=None):
         subprocess.run(['codesign','--force','--sign','-',str(contents/'MacOS/fabric-computer-use')],check=True)
         subprocess.run(['codesign','--force','--sign','-',str(stage)],check=True)
         subprocess.run(['codesign','--verify','--deep','--strict',str(stage)],check=True)
-        stop_instances(app/'Contents/MacOS/fabric-mac')
-        previous=Path(stage_dir)/'Previous.app'
-        if app.exists():app.rename(previous)
-        try:stage.rename(app)
+        legacy = legacy_mac_app(app)
+        old_bundles = [old for old in (app, legacy) if old is not None and old.exists()]
+        for old in old_bundles:
+            stop_instances(old/'Contents/MacOS/fabric-mac')
+        moved = []
+        try:
+            for index, old in enumerate(old_bundles):
+                previous = Path(stage_dir)/f'Previous-{index}.app'
+                old.rename(previous)
+                moved.append((old, previous))
+            stage.rename(app)
         except Exception:
-            if previous.exists():previous.rename(app)
+            for old, previous in reversed(moved):
+                previous.rename(old)
             raise
     if destination is None:
         (app.parent/'mac-source.sha256').write_text(source)
     return app
 
 def installed_development_fingerprint():
+    app = APPLICATIONS_APP if APPLICATIONS_APP.exists() else legacy_mac_app(APPLICATIONS_APP)
+    if app is None:
+        return None
     try:
-        info = plistlib.loads((APPLICATIONS_APP/'Contents/Info.plist').read_bytes())
+        info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
         if info.get('CFBundleIdentifier') == 'local.memoryfabric.mac':
             return info.get('FabricSourceFingerprint')
     except (OSError, ValueError, plistlib.InvalidFileException):
@@ -67,7 +91,7 @@ def installed_development_fingerprint():
 def installed_mac_app(root):
     app = APPLICATIONS_APP
     source = fingerprint(root)
-    if installed_development_fingerprint() == source:
+    if app.exists() and installed_development_fingerprint() == source:
         return app
     try:
         manifest=json.loads((app/'Contents/Resources/standalone.json').read_text())
@@ -82,7 +106,7 @@ def mac_app(root,env,rebuild=False):
     installed=installed_mac_app(root)
     if not rebuild and installed:return installed
     destination = APPLICATIONS_APP if installed_development_fingerprint() else None
-    app=destination or support()/'App/fabric-memory.app';stamp=app.parent/'mac-source.sha256'
+    app=destination or support()/'App'/APP_BUNDLE_NAME;stamp=app.parent/'mac-source.sha256'
     if destination is None and not rebuild and app.exists() and stamp.exists() and stamp.read_text()==fingerprint(root):return app
     if not shutil.which('cargo'):raise ValueError('Install Rust (rustup.rs) to build the Mac app')
     # Compile in temporary storage and retain only the signed app bundle.
@@ -162,7 +186,7 @@ def main(root):
                             str(root/'tools/requirements.lock')], cwd=root, check=True)
             subprocess.run([str(python), str(root/'tools/prepare.py')], cwd=root, check=True)
         installed=installed_mac_app(root)
-        candidate=installed or support()/'App/fabric-memory.app'
+        candidate=installed or support()/'App'/APP_BUNDLE_NAME
         stamp=candidate.parent/'mac-source.sha256'
         bundled=(candidate/'Contents/Resources/standalone.json').is_file() and (bool(installed) or (stamp.is_file() and stamp.read_text()==fingerprint(root))) and not args.rebuild
         if sys.platform=='darwin' and not bundled:

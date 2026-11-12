@@ -213,7 +213,7 @@ def run_chrome(app_bundle):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--app", type=Path, default=Path("/Applications/fabric-memory.app"))
+    parser.add_argument("--app", type=Path, default=Path("/Applications/Fabric Memory.app"))
     parser.add_argument("--agent", action="store_true", help="Also test Fabric's local planner with isolated app data.")
     parser.add_argument("--model", help="Use this installed local model for the agent test.")
     parser.add_argument("--chrome", action="store_true", help="Also test input in a temporary Chrome tab.")

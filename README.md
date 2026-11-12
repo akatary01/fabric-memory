@@ -1,4 +1,4 @@
-# fabric-memory
+# Fabric Memory
 
 A local-first AI workspace for Mac, with shared memory through your own Memory beacon.
 
@@ -15,7 +15,7 @@ A local-first AI workspace for Mac, with shared memory through your own Memory b
 
 ## Mac download
 
-Open the disk image, drag **fabric-memory** to Applications, and launch it. A local model is included. Requires macOS 14+; Intel and Apple Silicon supported.
+Open the disk image, drag **Fabric Memory** to Applications, and launch it. A local model is included. Requires macOS 14+; Intel and Apple Silicon supported.
 
 [Build and sign an installer →](docs/DISTRIBUTION.md)
 

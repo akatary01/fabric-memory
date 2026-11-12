@@ -86,10 +86,12 @@ fn main() {
                 use tauri::menu::{Menu, MenuItem};
                 let status = MenuItem::with_id(app, "screen_control_status", "Screen idle", false, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&status])?;
-                let icon = app.default_window_icon().cloned().ok_or("Missing fabric-memory icon")?;
+                const MENU_ICON: &[u8; 36 * 36 * 4] = include_bytes!("../icons/menu-template.rgba");
+                let icon = tauri::image::Image::new(MENU_ICON, 36, 36);
                 let tray = tauri::tray::TrayIconBuilder::with_id("memory-fabric")
                     .menu(&menu)
                     .icon(icon)
+                    .icon_as_template(true)
                     .tooltip("Fabric Memory: screen idle")
                     .build(app)?;
                 let handle = app.handle().clone();

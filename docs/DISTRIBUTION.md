@@ -1,6 +1,6 @@
 # Mac downloads
 
-Recipients open the DMG, drag **fabric-memory** to Applications, and launch it. No Rust, npm, system Python, source checkout, Ollama installation, cloud token, or Memory beacon is required for local chat. Cloud and beacon connections are optional settings.
+Recipients open the DMG, drag **Fabric Memory** to Applications, and launch it. No Rust, npm, system Python, source checkout, Ollama installation, cloud token, or Memory beacon is required for local chat. Cloud and beacon connections are optional settings.
 
 Requires macOS 14 or newer. The app contains native Intel and Apple Silicon binaries, separate Python/ONNX runtimes, the default local language model and memory encoder, and the macOS permission helper. Allow several GB for the app and writable local models. Intel generation uses the CPU and is slower.
 

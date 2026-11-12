@@ -85,7 +85,7 @@ def package(root,output,identity=None,notary_profile=None):
     uv=shutil.which('uv') or str(Path.home()/'.local/bin/uv')
     # Temporary source/runtime/build artifacts are deleted on success or failure.
     with tempfile.TemporaryDirectory(prefix='fabric-package-') as temporary:
-        work=Path(temporary);app=work/'image/fabric-memory.app';contents=app/'Contents'
+        work=Path(temporary);app=work/'image/Fabric Memory.app';contents=app/'Contents'
         macos=contents/'MacOS';resources=contents/'Resources';macos.mkdir(parents=True);resources.mkdir()
         guides=resources/'AgentDocs';guides.mkdir()
         for source in [root/'AGENTS.md',root/'README.md',*sorted((root/'docs').glob('*.md'))]:
@@ -182,12 +182,12 @@ def package(root,output,identity=None,notary_profile=None):
                 if magic==b'\x00\x05\x16\x07':sidecar.unlink()
         run('xattr','-cr',app);sign(app,identity)
         (work/'image/Applications').symlink_to('/Applications')
-        (work/'image/Install.txt').write_text('fabric-memory\n\nDrag fabric-memory to Applications, then open it.\nRequires macOS 14 or newer. Apple Silicon and Intel supported.\nA local model is included. Cloud tokens and Memory beacon are optional; configure them in the app.\n'+('' if identity and notary_profile else '\nTEST BUILD: this copy is not notarized for public distribution.\n'))
+        (work/'image/Install.txt').write_text('Fabric Memory\n\nDrag Fabric Memory to Applications, then open it.\nRequires macOS 14 or newer. Apple Silicon and Intel supported.\nA local model is included. Cloud tokens and Memory beacon are optional; configure them in the app.\n'+('' if identity and notary_profile else '\nTEST BUILD: this copy is not notarized for public distribution.\n'))
         if fingerprint(root)!=source_fingerprint:raise ValueError('Source changed after the native build. Re-run packaging to include the latest revision.')
-        run('hdiutil','create','-volname','fabric-memory','-srcfolder',work/'image','-format','UDZO','-ov',dmg)
+        run('hdiutil','create','-volname','Fabric Memory','-srcfolder',work/'image','-format','UDZO','-ov',dmg)
         mount=work/'verified-image';mount.mkdir()
         run('hdiutil','attach','-readonly','-nobrowse','-mountpoint',mount,dmg,stdout=subprocess.DEVNULL)
-        try:run('codesign','--verify','--deep','--strict',mount/'fabric-memory.app')
+        try:run('codesign','--verify','--deep','--strict',mount/'Fabric Memory.app')
         finally:run('hdiutil','detach',mount,stdout=subprocess.DEVNULL)
         if identity:run('codesign','--sign',identity,'--timestamp',dmg)
         if notary_profile:
