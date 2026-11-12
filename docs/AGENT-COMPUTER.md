@@ -23,3 +23,14 @@ If accessibility reports no suitable control, a recent screenshot may help orien
 - Open Chrome with `computer {"action":"open_app","app":"chrome"}`, then use `computer {"action":"observe","app":"chrome"}` if the task depends on a visible window. A launch receipt does not establish the page or input state.
 - To click a visible control, take its path and label from the most recent observation of that app. For example, if the observed line is `0.2 AXButton · Continue`, call `computer {"action":"click","app":"com.example.app","element":"0.2","expected":"AXButton · Continue"}`. Replace the example target with the observed target. If the label changes, observe again and choose the new path.
 - To capture a screenshot, call `computer {"action":"screenshot"}` and check the result for the saved image path. Opening Screenshot alone does not complete capture.
+
+## Live macOS smoke test
+
+On an unlocked Mac with Fabric Memory installed and Accessibility granted, run:
+
+```sh
+python3 tools/check_computer_use.py
+python3 tools/check_computer_use.py --agent --model qwen3-vl:2b
+```
+
+The first command exercises the installed controller against a temporary AppKit window. The fixture writes the submitted text to its own receipt file, so a successful tool response alone cannot pass the test. The second command also checks whether the selected local model can plan and complete the task through Fabric's backend with isolated data. The screenshot check requires Screen Recording permission. The fixture takes focus while the test runs.
